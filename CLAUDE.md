@@ -109,8 +109,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
    not over a pinned tab (`isPinnedTab(at:in:)`), so clicks are untouched (not verified with a real drag);
    `keepPinnedTabsInPlace()` on every `windows` KVO (after mouse-up) re-inserts pinned windows first, in list
-   order, into the group holding most of them (public API, tested). `windowShouldClose` → false for pinned;
-   File → Close Tab is `App.closeTab(_:)`, validated off for a pinned key window.
+   order, into the group holding most of them (public API, tested). `windowShouldClose` → false for pinned
+   (window ×, Close Other Tabs do nothing); ⌘W = File → Close Tab = `App.closeTab(_:)`, which loads the
+   pinned URL on a pinned tab instead.
 2. **Outline**: finds `NSTabButton` views (private) in the selected window's tab bar, matched to
    `tabGroup.windows` by x order, sets `layer.border*`. Re-run via `outlinePinnedTabs()` (now, next runloop,
    +0.4 s) on selection/windows KVO, pin changes.

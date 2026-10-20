@@ -51,7 +51,7 @@ emoji, or an SF Symbol name such as `checklist`, `ticket`, `timer`). Settings �
 tabs get the rest), *Icon and name, full width*, *Name only, full width*, or *Separate row above the tabs* (buttons in the
 toolbar next to ‹ ›, tinted with the outline colour; the tab bar below only has the tabs you opened and
 stays hidden until you open one).
-Pinned tabs are locked: no close button, ⌘W does nothing on them (File → Close Tab is greyed out), they
+Pinned tabs are locked: no close button, ⌘W takes them back to their pinned page instead of closing, they
 can't be dragged, and anything that moves them (a tab dropped in between, one pulled into its own window)
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
 Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.

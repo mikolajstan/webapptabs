@@ -1220,11 +1220,18 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(reopenClosedTab(_:)): !closedTabs.isEmpty
-        case #selector(closeTab(_:)): NSApp.keyWindow.map { key in !tabs.contains { $0.window === key && $0.pinned != nil } } ?? false
+        case #selector(closeTab(_:)): NSApp.keyWindow != nil
         default: true
         }
     }
-    @objc func closeTab(_ sender: Any?) { NSApp.keyWindow?.performClose(sender) }
+    // ⌘W: closes a tab, but takes a pinned tab back to its pinned page (pinned tabs never close)
+    @objc func closeTab(_ sender: Any?) {
+        if let tab = tabs.first(where: { $0.window === NSApp.keyWindow }), let page = tab.pinned {
+            if let url = URL(string: page.url) { tab.webView.load(URLRequest(url: url)) }
+        } else {
+            NSApp.keyWindow?.performClose(sender)
+        }
+    }
     // File → Recently Closed lists every tab closed this session, newest first
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -1509,7 +1516,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
             Self.heading("Pinned tabs"),
             Self.hint("Open first, in this order, every time the app starts, with a coloured outline. "
                       + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (icon-only tabs show the name on hover). "
-                      + "They can't be closed (⌘W does nothing on them) or dragged; ⌘1, ⌘2… count them first."),
+                      + "They can't be closed or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
             scroll, buttons, styleRow, outlineRow,
         ])
         stack.orientation = .vertical
@@ -1696,7 +1703,7 @@ func buildMenu() -> NSMenu {
     submenu(name, [settings, .separator(), restore, mute, .separator(),
                    item("Hide \(name)", #selector(NSApplication.hide(_:)), "h"),
                    item("Quit \(name)", #selector(NSApplication.terminate(_:)), "q")])
-    let closeTab = item("Close Tab", #selector(App.closeTab(_:)), "w")   // greyed out on a pinned tab
+    let closeTab = item("Close Tab", #selector(App.closeTab(_:)), "w")   // on a pinned tab: back to its page
     closeTab.target = App.shared
     let reopen = item("Reopen Closed Tab", #selector(App.reopenClosedTab(_:)), "T")
     reopen.target = App.shared
