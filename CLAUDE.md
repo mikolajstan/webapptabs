@@ -89,14 +89,21 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    (`App.tabButtons(in:for:)`). Never set `buttonWidthForTitleLayout` to 0 – it loops the window layout
    ("more Layout Window passes than there are views") – zero-width tabs are `isHidden` instead.
    **Separate row** (`separateRow`): pinned buttons width 0 + hidden, toolbar item `.pinnedSwitcher`
-   (`PinnedSwitcher`: pill NSButtons tinted with `outlineColor`, `Tab.updateToolbar` /
-   `refreshPinnedSwitcher`; toolbars share the "main" identifier, so inserting in one adds to all).
-   The tab bar is hidden while only pinned tabs are open by hiding its NSTitlebarAccessoryViewController
-   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs.
+   (`PinnedSwitcher`: custom `Pill` views – icon + label in a padded stack, layer background tinted with
+   `outlineColor`; an NSButton with image + attributed title under-reported its width, so the text ran
+   past the background. `Tab.updateToolbar` / `refreshPinnedSwitcher`; toolbars share the "main"
+   identifier, so inserting in one adds to all).
+   The tab bar is hidden while only pinned tabs are open by hiding the NSTitlebarAccessoryViewController
+   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs. Hide it in
+   **every** tab window: each has the accessory, but the NSTabBar view inside moves to the selected one.
+   Hiding only the window that holds the bar made every tab switch resize the page by 36 px, which left
+   Netivo drawn shifted under the toolbar and looking frozen/slow (user report).
    **Clicks**: NSTabBar finds the clicked tab arithmetically from its equal-width layout
    (`_visibleTabIndexAtPoint:stackingRegion:ignorePointsOutsideOfLayoutBounds:`, point in the buttons'
    row coordinates) → hooked to answer from the real frames whenever kept frames are active
-   (`tabIndex(at:in:)`), else clicks hit the wrong / hidden tabs. Test clicks: post the mouse-up with
+   (`tabIndex(at:in:)`, NSNotFound for empty space), else clicks hit the wrong / hidden tabs.
+   A click on empty tab-bar space sends `newWindowForTab:` – `Tab.newWindowForTab` ignores it unless the
+   click hit `NSTabBarNewTabButton` (+); ⌘T / menu are keyboard events and pass. Test clicks: post the mouse-up with
    `NSApp.postEvent` *before* `sendEvent(mouseDown)`, or the tracking loop hangs.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND

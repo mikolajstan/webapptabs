@@ -282,7 +282,15 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
     }
 
     // ⌘T and the "+" button in the tab bar
-    override func newWindowForTab(_ sender: Any?) { App.shared.openTab(url: homeURL, next: self) }
+    override func newWindowForTab(_ sender: Any?) {
+        // the tab bar also sends this for a click on its empty space – only its + button should open a tab
+        if let event = NSApp.currentEvent, [.leftMouseDown, .leftMouseUp].contains(event.type),
+           let hit = event.window?.contentView?.superview?.hitTest(event.locationInWindow) {
+            let names = sequence(first: hit, next: \.superview).map { String(describing: type(of: $0)) }
+            if names.contains("NSTabBar"), !names.contains("NSTabBarNewTabButton") { return }
+        }
+        App.shared.openTab(url: homeURL, next: self)
+    }
 
     // Like Safari: background tabs opened from this tab line up after each other, in click order,
     // until you switch tabs
@@ -734,10 +742,10 @@ final class App: NSObject, NSApplicationDelegate {
     func tabIndex(at point: NSPoint, in bar: NSView) -> UInt? {
         guard let windows = bar.window?.tabGroup?.windows, let buttons = Self.tabButtons(in: bar, for: windows),
               buttons.contains(where: { Self.keptFrames[ObjectIdentifier($0)] != nil }) else { return nil }
-        let visible = buttons.indices.filter { !buttons[$0].isHidden && buttons[$0].frame.width > 0 }
-        let hit = visible.first { point.x >= buttons[$0].frame.minX && point.x < buttons[$0].frame.maxX + 1 }
-            ?? visible.min { abs(buttons[$0].frame.midX - point.x) < abs(buttons[$1].frame.midX - point.x) }
-        return hit.map(UInt.init)
+        let hit = buttons.indices.first { i in
+            !buttons[i].isHidden && point.x >= buttons[i].frame.minX && point.x < buttons[i].frame.maxX + 1   // + the 1 px gap
+        }
+        return hit.map(UInt.init) ?? UInt(NSNotFound)   // empty space: no tab
     }
     // Pinned tabs can't be closed, so they get no close button (the tab bar asks per tab item)
     private static func hideCloseButtonOfPinnedTabs() {
@@ -1044,15 +1052,16 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     // "Separate row above the tabs": the tab bar (with its +) stays hidden until a tab besides the pinned
-    // ones is open. It's a titlebar accessory of the tabbed window, which can be hidden (toggleTabBar
-    // can't hide it while a window has 2+ tabs).
+    // ones is open. It's a titlebar accessory of the tabbed windows, which can be hidden (toggleTabBar
+    // can't hide it while a window has 2+ tabs). Every tab window has that accessory, but the tab bar
+    // view inside it moves to whichever tab is selected – so all of them are hidden/shown together
+    // (this app adds no accessories of its own). Otherwise switching tabs resizes the page each time.
     func updateTabBarVisibility() {
         for tab in tabs {
             guard let window = tab.window, let group = window.tabGroup else { continue }
             let others = group.windows.contains { w in !tabs.contains { $0.window === w && $0.pinned != nil } }
             let hide = pinnedStyle == .separateRow && !others
-            for accessory in window.titlebarAccessoryViewControllers
-            where accessory.isHidden != hide && Self.tabBar(in: accessory.view) != nil {
+            for accessory in window.titlebarAccessoryViewControllers where accessory.isHidden != hide {
                 accessory.isHidden = hide
             }
         }
@@ -1351,38 +1360,57 @@ func webURL(from text: String) -> URL? {
 final class PinnedSwitcher: NSStackView {
     var onSelect: ((Int) -> Void)?
 
-    final class Pill: NSButton {
-        override var intrinsicContentSize: NSSize {
-            let size = super.intrinsicContentSize
-            return NSSize(width: size.width + 22, height: 26)
+    // icon + name with fixed padding; the background is the view's own layer, so it always fits the content
+    final class Pill: NSView {
+        let icon = NSImageView()
+        let label = NSTextField(labelWithString: "")
+        var onPress: (() -> Void)?
+
+        init() {
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer?.cornerRadius = 13
+            layer?.borderWidth = 1
+            icon.contentTintColor = .labelColor
+            label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+            let row = NSStackView(views: [icon, label])
+            row.spacing = 5
+            row.edgeInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 12)
+            row.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(row)
+            NSLayoutConstraint.activate([
+                row.leadingAnchor.constraint(equalTo: leadingAnchor), row.trailingAnchor.constraint(equalTo: trailingAnchor),
+                row.topAnchor.constraint(equalTo: topAnchor), row.bottomAnchor.constraint(equalTo: bottomAnchor),
+                heightAnchor.constraint(equalToConstant: 26),
+                icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
+            ])
+            setAccessibilityElement(true)
+            setAccessibilityRole(.button)
         }
+        required init?(coder: NSCoder) { fatalError() }
+        override func mouseDown(with event: NSEvent) {}
+        override func mouseUp(with event: NSEvent) {
+            if bounds.contains(convert(event.locationInWindow, from: nil)) { onPress?() }
+        }
+        override func accessibilityPerformPress() -> Bool { onPress?(); return true }
     }
 
     func update(pages: [PinnedPage], selected: Int?, color: NSColor) {
         spacing = 6
         while arrangedSubviews.count > pages.count { arrangedSubviews.last?.removeFromSuperview() }
-        while arrangedSubviews.count < pages.count {
-            let pill = Pill(title: "", target: self, action: #selector(clicked(_:)))
-            pill.isBordered = false
-            pill.imagePosition = .imageLeading
-            pill.imageHugsTitle = true
-            pill.wantsLayer = true
-            pill.layer?.cornerRadius = 13
-            pill.layer?.borderWidth = 1
-            addArrangedSubview(pill)
-        }
+        while arrangedSubviews.count < pages.count { addArrangedSubview(Pill()) }
         let rgb = color.usingColorSpace(.sRGB) ?? color
         let alpha = rgb.alphaComponent
         for (index, view) in arrangedSubviews.enumerated() {
             guard let pill = view as? Pill else { continue }
             let page = pages[index], isSelected = index == selected
-            pill.tag = index
-            pill.image = page.iconImage
-            pill.contentTintColor = .labelColor
-            pill.attributedTitle = NSAttributedString(string: page.name, attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium),
-                .foregroundColor: isSelected ? NSColor.labelColor : NSColor.secondaryLabelColor])
+            pill.onPress = { [weak self] in self?.onSelect?(index) }
+            pill.icon.image = page.iconImage
+            pill.label.stringValue = page.name
+            pill.label.textColor = isSelected ? .labelColor : .secondaryLabelColor
             pill.toolTip = page.url
+            pill.setAccessibilityLabel(page.name)
+            pill.setAccessibilityValue(isSelected ? "selected" : nil)
             // with no colour (opacity 0) the selected one still gets a neutral background
             let background = alpha < 0.05 ? (isSelected ? NSColor.quaternaryLabelColor : .clear)
                 : rgb.withAlphaComponent(isSelected ? max(alpha, 0.6) : alpha * 0.35)
@@ -1390,10 +1418,8 @@ final class PinnedSwitcher: NSStackView {
                 pill.layer?.backgroundColor = background.cgColor
                 pill.layer?.borderColor = rgb.withAlphaComponent(alpha < 0.05 ? 0 : max(alpha, 0.5)).cgColor
             }
-            pill.setAccessibilityValue(isSelected ? "selected" : nil)
         }
     }
-    @objc private func clicked(_ sender: NSButton) { onSelect?(sender.tag) }
 }
 
 // MARK: Settings window (⌘,): home page and pinned tabs, saved per app
