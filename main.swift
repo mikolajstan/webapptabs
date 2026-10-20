@@ -78,6 +78,7 @@ enum Setting {
     static let windowFrame = "windowFrame"
     static let homeURL = "homeURL"   // also read by Link Router
     static let pinnedPages = "pinnedPages"
+    static let quickPages = "quickPages"
     static let outlineColor = "pinnedOutlineColor"
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
@@ -105,6 +106,10 @@ struct PinnedPage: Codable, Equatable {
     // Shown in the compact tab: an SF Symbol name ("checklist"), or 1–2 letters / an emoji.
     // Default: the first letter of the name.
     var icon: String?
+    // A quick tab (Settings → Quick tabs): open and locked like a pinned tab, but reached only through its
+    // button at the right end of the toolbar – hidden in the tab bar, skipped by ⌃Tab and ⌘1…⌘9
+    var quick: Bool?
+    var isQuick: Bool { quick == true }
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -202,7 +207,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
               let item = tab.value(forKey: "tabBarItem") as? NSObject,
               item.responds(to: NSSelectorFromString("setPinned:")),
               item.responds(to: NSSelectorFromString("setShowIcon:")) else { return }
-        let style = pinned == nil ? nil : App.shared.pinnedStyle
+        let style = pinned == nil || pinned?.isQuick == true ? nil : App.shared.pinnedStyle
         let iconAndName = style == .iconAndName || style == .iconAndNameCompact
         item.setValue(style == .icon || iconAndName ? pinned?.iconImage : nil, forKey: "image")
         item.setValue(iconAndName, forKey: "showIcon")
@@ -211,7 +216,12 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
     private let titleLabel = NSTextField(labelWithString: "")
     private lazy var pinnedSwitcher: PinnedSwitcher = {
         let switcher = PinnedSwitcher()
-        switcher.onSelect = { [weak self] index in self?.selectPinnedPage(at: index) }
+        switcher.onSelect = { [weak self] index in self?.selectPinnedPage(App.shared.pinnedPages[safe: index]) }
+        return switcher
+    }()
+    private lazy var quickSwitcher: PinnedSwitcher = {
+        let switcher = PinnedSwitcher()
+        switcher.onSelect = { [weak self] index in self?.selectPinnedPage(App.shared.quickPages[safe: index]) }
         return switcher
     }()
 
@@ -230,7 +240,9 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         // Safari web app look: ‹ › on the left, page title centered
         window.titleVisibility = .hidden            // the tab bar still shows window.title
         window.toolbarStyle = .unified
-        let toolbar = NSToolbar(identifier: "main")
+        // its own identifier: toolbars sharing one mirror item changes, which breaks adding an item to a
+        // window that already has it (updateToolbar manages each window's items itself)
+        let toolbar = NSToolbar(identifier: "main-\(id)")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.centeredItemIdentifiers = [.pageTitle]
@@ -466,15 +478,17 @@ extension NSToolbarItem.Identifier {
     static let pageTitle = Self("pageTitle")
     static let share = Self("share")
     static let pinnedSwitcher = Self("pinnedSwitcher")
+    static let quickSwitcher = Self("quickSwitcher")
 }
 
 extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.back, .forward] + (App.shared.pinnedStyle == .separateRow ? [.pinnedSwitcher] : [])
-            + [.flexibleSpace, .pageTitle, .flexibleSpace, .share]
+            + [.flexibleSpace, .pageTitle, .flexibleSpace]
+            + (App.shared.quickPages.isEmpty ? [] : [.quickSwitcher]) + [.share]
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .pinnedSwitcher, .flexibleSpace, .pageTitle, .share]
+        [.back, .forward, .pinnedSwitcher, .flexibleSpace, .pageTitle, .quickSwitcher, .share]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -503,6 +517,10 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
             item.label = "Pinned Tabs"
             item.view = pinnedSwitcher
             refreshPinnedSwitcher()
+        case .quickSwitcher:
+            item.label = "Quick Tabs"
+            item.view = quickSwitcher
+            refreshPinnedSwitcher()
         default:
             return nil
         }
@@ -513,26 +531,32 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
         webView.url.map { [$0] } ?? []
     }
 
-    // "Separate row above the tabs": the pinned pages as one switcher in the toolbar, after ‹ ›.
-    // Toolbars with the same identifier share their items, so inserting it in one window adds it to all.
+    // "Separate row above the tabs": the pinned pages as one switcher in the toolbar, after ‹ ›; quick tabs:
+    // their switcher at the right end, before Share. Called for every tab's toolbar.
     func updateToolbar() {
         guard let toolbar = window?.toolbar else { return }
-        let index = toolbar.items.firstIndex { $0.itemIdentifier == .pinnedSwitcher }
-        if App.shared.pinnedStyle == .separateRow, index == nil {
+        let pinnedIndex = toolbar.items.firstIndex { $0.itemIdentifier == .pinnedSwitcher }
+        if App.shared.pinnedStyle == .separateRow, pinnedIndex == nil {
             toolbar.insertItem(withItemIdentifier: .pinnedSwitcher, at: 2)
-        } else if App.shared.pinnedStyle != .separateRow, let index {
-            toolbar.removeItem(at: index)
+        } else if App.shared.pinnedStyle != .separateRow, let pinnedIndex {
+            toolbar.removeItem(at: pinnedIndex)
+        }
+        let quickIndex = toolbar.items.firstIndex { $0.itemIdentifier == .quickSwitcher }
+        if !App.shared.quickPages.isEmpty, quickIndex == nil {
+            toolbar.insertItem(withItemIdentifier: .quickSwitcher,
+                               at: toolbar.items.firstIndex { $0.itemIdentifier == .share } ?? toolbar.items.count)
+        } else if App.shared.quickPages.isEmpty, let quickIndex {
+            toolbar.removeItem(at: quickIndex)
         }
     }
     func refreshPinnedSwitcher() {
-        let pages = App.shared.pinnedPages
-        let selected = App.shared.selectedTab?.pinned?.id
-        pinnedSwitcher.update(pages: pages, selected: pages.firstIndex { $0.id == selected }, color: App.shared.outlineColor)
+        let selected = App.shared.selectedTab?.pinned?.id, color = App.shared.outlineColor
+        let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
+        pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color)
+        quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color)
     }
-    private func selectPinnedPage(at index: Int) {
-        let pages = App.shared.pinnedPages
-        guard pages.indices.contains(index),
-              let tab = App.shared.tabs.first(where: { $0.pinned?.id == pages[index].id }) else { return }
+    private func selectPinnedPage(_ page: PinnedPage?) {
+        guard let page, let tab = App.shared.tabs.first(where: { $0.pinned?.id == page.id }) else { return }
         tab.window?.tabGroup?.selectedWindow = tab.window
         tab.window?.makeKeyAndOrderFront(nil)
     }
@@ -849,34 +873,46 @@ final class App: NSObject, NSApplicationDelegate {
         }
         for view in buttons + separators { Self.keptFrames[ObjectIdentifier(view)] = nil }
         let separateRow = pinnedStyle == .separateRow
-        let pinnedCount = windows.prefix { w in tabs.contains { $0.window === w && $0.pinned != nil } }.count
+        let pages = windows.map { w in tabs.first { $0.window === w }?.pinned }
+        let pinnedCount = pages.prefix { $0 != nil }.count
+        let hasQuick = pages.contains { $0?.isQuick == true }
         for button in buttons where button.isHidden { button.isHidden = false }
-        guard pinnedStyle == .iconAndNameCompact || separateRow, pinnedCount > 0 else { return }
-        // the tab's content row is 5 | close-button slot 16 | icon 16 + 6 + name (+4) | right slot 16 | 5
-        let fits = buttons.prefix(pinnedCount).map { button -> CGFloat in
-            if separateRow { return 0 }   // shown in the toolbar instead
-            let spacing = Self.firstStack(in: button)?.spacing ?? 8
-            let name = Self.firstLabel(in: button)?.intrinsicContentSize.width ?? 60
-            return ceil(2 * (5 + 16 + spacing) + 16 + 6 + name + 4)
+        guard pinnedStyle == .iconAndNameCompact || separateRow || hasQuick, pinnedCount > 0 else { return }
+        // fixed widths: quick tabs and the separate row's pinned tabs 0 (hidden), icon-only 36, compact
+        // icon + name: what the tab's content row needs (5 | close slot 16 | icon 16 + 6 + name (+4) | slot 16 | 5);
+        // nil = shares what's left (normal tabs, full-width pinned tabs)
+        let fixed = buttons.indices.map { index -> CGFloat? in
+            guard index < pinnedCount, let page = pages[index] else { return nil }
+            if page.isQuick || separateRow { return 0 }
+            switch pinnedStyle {
+            case .icon: return 36
+            case .iconAndNameCompact:
+                let spacing = Self.firstStack(in: buttons[index])?.spacing ?? 8
+                let name = Self.firstLabel(in: buttons[index])?.intrinsicContentSize.width ?? 60
+                return ceil(2 * (5 + 16 + spacing) + 16 + 6 + name + 4)
+            default: return nil
+            }
         }
         let gap: CGFloat = 1
         let start: CGFloat = 0, end = row.bounds.width
-        let others = buttons.count - pinnedCount
-        let gaps = gap * CGFloat(buttons.count - 1 - (separateRow ? pinnedCount : 0))
-        let rest = others == 0 ? 0 : (end - start - fits.reduce(0, +) - gaps) / CGFloat(others)
-        // crowded: native layout (with the separate row, never show the pinned tabs in the bar again)
-        guard others == 0 || rest >= (separateRow ? 1 : 100) else { return }
+        let flexible = fixed.filter { $0 == nil }.count
+        let visible = fixed.filter { $0 != 0 }.count
+        let rest = flexible == 0 ? 0
+            : (end - start - fixed.reduce(0) { $0 + ($1 ?? 0) } - gap * CGFloat(max(0, visible - 1))) / CGFloat(flexible)
+        // crowded: native layout – unless that would show hidden tabs in the bar again
+        guard flexible == 0 || rest >= (separateRow || hasQuick ? 1 : 100) else { return }
+        let fits = fixed.map { $0 ?? rest }
         let barWidth = row.bounds.width, count = row.subviews.count
         var x = start
         for (index, button) in buttons.enumerated() {
-            let width = (index < pinnedCount ? fits[index] : rest).rounded(.down)
+            let width = fits[index].rounded(.down)
             Self.keptFrames[ObjectIdentifier(button)] = (x.rounded(), width, barWidth, count)
             if separators.count == buttons.count {
                 let line = width == 0 ? 0 : separators[index].frame.width   // no line after a hidden tab
                 Self.keptFrames[ObjectIdentifier(separators[index])] = (x.rounded() + width, line, barWidth, count)
                 separators[index].frame = separators[index].frame   // the setter applies the kept frame
             }
-            x += (index < pinnedCount ? fits[index] : rest) + (width == 0 ? 0 : gap)
+            x += fits[index] + (width == 0 ? 0 : gap)
             if button.isHidden != (width == 0) { button.isHidden = width == 0 }   // the separate row's pinned tabs
             button.frame = button.frame
             if width > 0, button.responds(to: NSSelectorFromString("setButtonWidthForTitleLayout:")),
@@ -1008,19 +1044,27 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     var pinnedPages: [PinnedPage] {
-        get {
-            UserDefaults.standard.data(forKey: Setting.pinnedPages)
-                .flatMap { try? JSONDecoder().decode([PinnedPage].self, from: $0) } ?? []
-        }
-        set {
-            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Setting.pinnedPages)
-            applyPinnedPages()
-        }
+        get { Self.pages(Setting.pinnedPages, quick: nil) }
+        set { Self.store(newValue, Setting.pinnedPages, quick: nil); applyPinnedPages() }
+    }
+    var quickPages: [PinnedPage] {
+        get { Self.pages(Setting.quickPages, quick: true) }
+        set { Self.store(newValue, Setting.quickPages, quick: true); applyPinnedPages() }
+    }
+    // the order the tabs keep: pinned first, then the quick tabs
+    var allPinnedPages: [PinnedPage] { pinnedPages + quickPages }
+    private static func pages(_ key: String, quick: Bool?) -> [PinnedPage] {
+        (UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode([PinnedPage].self, from: $0) } ?? [])
+            .map { var page = $0; page.quick = quick; return page }
+    }
+    private static func store(_ pages: [PinnedPage], _ key: String, quick: Bool?) {
+        let pages = pages.map { var page = $0; page.quick = quick; return page }
+        UserDefaults.standard.set(try? JSONEncoder().encode(pages), forKey: key)
     }
 
     // Make the open tabs match the list: pin, unpin, rename, open new ones, keep them first and in order
     func applyPinnedPages() {
-        let pages = pinnedPages
+        let pages = allPinnedPages
         let keyWindow = NSApp.keyWindow, selected = selectedTab?.window   // put back afterwards
         for tab in tabs where tab.pinned != nil && !pages.contains(where: { $0.id == tab.pinned?.id }) {
             tab.pinned = nil
@@ -1047,7 +1091,8 @@ final class App: NSObject, NSApplicationDelegate {
         }
         if let selected { selected.tabGroup?.selectedWindow = selected }
         keyWindow?.makeKeyAndOrderFront(nil)
-        tabs.forEach { $0.refreshPinnedSwitcher() }
+        tabs.forEach { $0.updateToolbar(); $0.refreshPinnedSwitcher() }
+        updateTabBarVisibility()
         saveSession()
     }
 
@@ -1059,8 +1104,12 @@ final class App: NSObject, NSApplicationDelegate {
     func updateTabBarVisibility() {
         for tab in tabs {
             guard let window = tab.window, let group = window.tabGroup else { continue }
-            let others = group.windows.contains { w in !tabs.contains { $0.window === w && $0.pinned != nil } }
-            let hide = pinnedStyle == .separateRow && !others
+            // tabs the bar shows: quick tabs never, pinned ones unless they're in the separate row
+            let shown = group.windows.filter { w in
+                guard let page = tabs.first(where: { $0.window === w })?.pinned else { return true }
+                return !page.isQuick && pinnedStyle != .separateRow
+            }.count
+            let hide = pinnedStyle == .separateRow ? shown == 0 : shown <= 1   // like macOS: no bar for a single tab
             for accessory in window.titlebarAccessoryViewControllers where accessory.isHidden != hide {
                 accessory.isHidden = hide
             }
@@ -1080,7 +1129,7 @@ final class App: NSObject, NSApplicationDelegate {
                 return
             }
             defer { isKeepingPinnedInPlace = false }
-            let pinnedTabs = pinnedPages.compactMap { page in tabs.first { $0.pinned?.id == page.id } }
+            let pinnedTabs = allPinnedPages.compactMap { page in tabs.first { $0.pinned?.id == page.id } }
             // home: the window holding most pinned tabs (then the one with most tabs)
             let groups = pinnedTabs.compactMap { $0.window?.tabGroup }
             guard let home = groups.max(by: { a, b in
@@ -1143,7 +1192,7 @@ final class App: NSObject, NSApplicationDelegate {
     func openStartTabs() {
         isRestoringOrQuitting = true
         var pinnedTabs: [Tab] = []
-        for page in pinnedPages {
+        for page in allPinnedPages {
             guard let url = URL(string: page.url) else { continue }
             pinnedTabs.append(openTab(url: url, next: pinnedTabs.last, newWindow: pinnedTabs.isEmpty,
                                       inBackground: !pinnedTabs.isEmpty, pinned: page))
@@ -1178,15 +1227,23 @@ final class App: NSObject, NSApplicationDelegate {
 
     // ⌃Tab / ⌃⇧Tab / ⌘1…⌘9, handled before the web view can swallow them
     func handleTabShortcut(_ keyCode: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String?) -> Bool {
-        guard let window = NSApp.keyWindow, window.attachedSheet == nil else { return false }
+        guard let window = NSApp.keyWindow ?? selectedTab?.window, window.attachedSheet == nil else { return false }
         let mods = flags.intersection(.deviceIndependentFlagsMask)
+        let group = window.tabbedWindows ?? [window]
+        // quick tabs are left out: they're reached through their toolbar buttons only
+        let isQuick = { (w: NSWindow) in self.tabs.contains { $0.window === w && $0.pinned?.isQuick == true } }
         if keyCode == 48, mods.contains(.control) {
-            mods.contains(.shift) ? window.selectPreviousTab(nil) : window.selectNextTab(nil)
+            guard let current = group.firstIndex(of: window.tabGroup?.selectedWindow ?? window) else { return false }
+            let step = mods.contains(.shift) ? -1 : 1
+            for offset in 1..<max(group.count, 2) {
+                let candidate = group[((current + step * offset) % group.count + group.count) % group.count]
+                if !isQuick(candidate) { candidate.makeKeyAndOrderFront(nil); break }
+            }
             return true
         }
-        if mods == .command, let n = Int(chars ?? ""), (1...9).contains(n),
-           let group = window.tabbedWindows {
-            let target = n == 9 ? group.last : (n <= group.count ? group[n - 1] : nil)
+        if mods == .command, let n = Int(chars ?? ""), (1...9).contains(n) {
+            let tabsInOrder = group.filter { !isQuick($0) }
+            let target = n == 9 ? tabsInOrder.last : tabsInOrder[safe: n - 1]
             target?.makeKeyAndOrderFront(nil)
             return true
         }
@@ -1226,10 +1283,11 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     }
     // ⌘W: closes a tab, but takes a pinned tab back to its pinned page (pinned tabs never close)
     @objc func closeTab(_ sender: Any?) {
-        if let tab = tabs.first(where: { $0.window === NSApp.keyWindow }), let page = tab.pinned {
+        let window = (NSApp.keyWindow ?? selectedTab?.window).map { $0.tabGroup?.selectedWindow ?? $0 }   // the tab you're looking at
+        if let tab = tabs.first(where: { $0.window === window }), let page = tab.pinned {
             if let url = URL(string: page.url) { tab.webView.load(URLRequest(url: url)) }
         } else {
-            NSApp.keyWindow?.performClose(sender)
+            window?.performClose(sender)
         }
     }
     // File → Recently Closed lists every tab closed this session, newest first
@@ -1362,7 +1420,11 @@ func webURL(from text: String) -> URL? {
     return url
 }
 
-// "Separate row above the tabs": the pinned pages as pills in the toolbar, tinted with the outline colour
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+// "Separate row above the tabs" and quick tabs: the pages as pills in the toolbar, tinted with the outline colour
 // (Settings → Outline colour): faint when not selected, stronger when selected, outlined like the tabs.
 final class PinnedSwitcher: NSStackView {
     var onSelect: ((Int) -> Void)?
@@ -1432,41 +1494,23 @@ final class PinnedSwitcher: NSStackView {
     }
 }
 
-// MARK: Settings window (⌘,): home page and pinned tabs, saved per app
-final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate,
-                            NSTextFieldDelegate {
-    static let shared = SettingsWindow()
-    private let homeField = NSTextField()
-    private let table = NSTableView()
-    private let rowType = NSPasteboard.PasteboardType("local.webapptabs.pinned-row")
+// A list of pages (Icon | Name | Address) with + / − and drag to reorder; every change is saved right away.
+// Used twice in Settings: pinned tabs and quick tabs.
+@MainActor
+final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    let table = NSTableView()
+    let scroll = NSScrollView()
+    let buttons = NSStackView()
+    private let rowType: NSPasteboard.PasteboardType
+    private let load: () -> [PinnedPage]
+    private let store: ([PinnedPage]) -> Void
     private var pages: [PinnedPage] = []
-    private let colorWell = NSColorWell(style: .default)
-    private let hexField = NSTextField()
-    private let stylePopup = NSPopUpButton()
 
-    init() {
-        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "\(name) Settings"
-        window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 480, height: 400)
-        super.init(window: window)
-        window.delegate = self
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let isEscape = event.keyCode == 53, windowNumber = event.windowNumber
-            let handled = isEscape && MainActor.assumeIsolated {
-                guard let self, let window = self.window, window.windowNumber == windowNumber,
-                      self.table.editedRow < 0 else { return false }
-                window.performClose(nil)   // Esc
-                return true
-            }
-            return handled ? nil : event
-        }
-
-        homeField.placeholderString = defaultHomeURL.absoluteString
-        homeField.delegate = self
-
+    init(id: String, load: @escaping () -> [PinnedPage], store: @escaping ([PinnedPage]) -> Void) {
+        self.load = load
+        self.store = store
+        rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
+        super.init()
         for (id, title, width) in [("icon", "Icon", 80.0), ("name", "Name", 120.0), ("url", "Address", 350.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -1478,94 +1522,28 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
         table.rowHeight = 24
         table.usesAlternatingRowBackgroundColors = true
         table.registerForDraggedTypes([rowType])
-        let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
-
         let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "Add")!,
                            target: self, action: #selector(addPage))
         let remove = NSButton(image: NSImage(systemSymbolName: "minus", accessibilityDescription: "Remove")!,
                               target: self, action: #selector(removePage))
         add.toolTip = "Add the current page"
         remove.toolTip = "Remove the selected page"
-        let buttons = NSStackView(views: [add, remove, Self.hint("Drag rows to reorder. Changes apply right away.")])
-        // Outline colour of pinned tabs: the well opens the colour picker (with an opacity slider)
-        colorWell.target = self
-        colorWell.action = #selector(outlineColorChanged)
-        NSColorPanel.shared.showsAlpha = true
-        let reset = NSButton(title: "Default", target: self, action: #selector(resetOutlineColor))
-        reset.controlSize = .small
-        hexField.placeholderString = "#RRGGBBAA"
-        hexField.toolTip = "#RRGGBB or #RRGGBBAA – the last two digits are the opacity (00 = no outline)"
-        hexField.delegate = self
-        hexField.widthAnchor.constraint(equalToConstant: 92).isActive = true
-        let outlineRow = NSStackView(views: [NSTextField(labelWithString: "Outline colour:"), colorWell, hexField, reset,
-                                             Self.hint("AA = opacity, 00 = none")])
-        outlineRow.spacing = 8
-        stylePopup.addItems(withTitles: PinnedStyle.allCases.map(\.title))
-        stylePopup.target = self
-        stylePopup.action = #selector(styleChanged)
-        let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup])
-        styleRow.spacing = 8
+        let hint = NSTextField(labelWithString: "Drag rows to reorder. Changes apply right away.")
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        [add, remove, hint].forEach(buttons.addArrangedSubview)
         buttons.spacing = 6
-
-        let stack = NSStackView(views: [
-            Self.heading("Home page"), homeField,
-            Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
-            Self.heading("Pinned tabs"),
-            Self.hint("Open first, in this order, every time the app starts, with a coloured outline. "
-                      + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (icon-only tabs show the name on hover). "
-                      + "They can't be closed or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
-            scroll, buttons, styleRow, outlineRow,
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.setCustomSpacing(18, after: stack.views[2])
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-        window.contentView = stack
-        for view in [homeField, scroll] + stack.views.filter({ $0 is NSTextField && $0 !== homeField }) {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-        }
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 170).isActive = true
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
-        window.center()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    private static func heading(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        return label
-    }
-    private static func hint(_ text: String) -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        return label
     }
 
-    @objc private func styleChanged() { App.shared.pinnedStyle = PinnedStyle.allCases[stylePopup.indexOfSelectedItem] }
-
-    func show() {
-        pages = App.shared.pinnedPages
-        stylePopup.selectItem(at: PinnedStyle.allCases.firstIndex(of: App.shared.pinnedStyle) ?? 0)
-        colorWell.color = App.shared.outlineColor
-        hexField.stringValue = App.shared.outlineColor.hexString
-        homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""
+    var isEditing: Bool { table.editedRow >= 0 }
+    func reload() {
+        pages = load()
         table.reloadData()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
     }
-
-    // Finish an edit that's still in progress when the window closes
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.makeFirstResponder(nil)
-        return true
-    }
-
-    private func save() { App.shared.pinnedPages = pages }
+    private func save() { store(pages) }
 
     @objc private func addPage() {
         let tab = App.shared.frontTab   // start from the page you're on
@@ -1578,18 +1556,6 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
         table.selectRowIndexes([row], byExtendingSelection: false)
         table.editColumn(1, row: row, with: nil, select: true)
     }
-
-    @objc private func outlineColorChanged() {
-        App.shared.outlineColor = colorWell.color
-        hexField.stringValue = App.shared.outlineColor.hexString
-    }
-    @objc private func resetOutlineColor() {
-        UserDefaults.standard.removeObject(forKey: Setting.outlineColor)
-        colorWell.color = App.shared.outlineColor
-        hexField.stringValue = App.shared.outlineColor.hexString
-        App.shared.outlinePinnedTabs()
-    }
-
     @objc private func removePage() {
         guard pages.indices.contains(table.selectedRow) else { return NSSound.beep() }
         pages.remove(at: table.selectedRow)
@@ -1599,18 +1565,6 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === homeField { return saveHome() }
-        if field === hexField {
-            guard let color = NSColor(hex: field.stringValue) else {
-                NSSound.beep()
-                field.stringValue = App.shared.outlineColor.hexString
-                return
-            }
-            App.shared.outlineColor = color
-            colorWell.color = App.shared.outlineColor
-            field.stringValue = App.shared.outlineColor.hexString
-            return
-        }
         let row = table.row(for: field)
         guard pages.indices.contains(row) else { return }
         if field.identifier?.rawValue == "icon" {
@@ -1628,15 +1582,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
         save()
     }
 
-    private func saveHome() {
-        let text = homeField.stringValue.trimmingCharacters(in: .whitespaces)
-        if text.isEmpty { return UserDefaults.standard.removeObject(forKey: Setting.homeURL) }
-        guard let url = webURL(from: text) else { return NSSound.beep() }
-        UserDefaults.standard.set(url.absoluteString, forKey: Setting.homeURL)
-        homeField.stringValue = url.absoluteString
-    }
-
-    // Table: Name | Address, editable, drag to reorder
+    // Icon | Name | Address, editable, drag to reorder (within this list only)
     func numberOfRows(in tableView: NSTableView) -> Int { pages.count }
 
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
@@ -1657,13 +1603,12 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
         item.setString(String(row), forType: rowType)
         return item
     }
-
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+        guard info.draggingPasteboard.string(forType: rowType) != nil else { return [] }
         if operation == .on { tableView.setDropRow(row, dropOperation: .above) }
         return .move
     }
-
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
                    dropOperation: NSTableView.DropOperation) -> Bool {
         guard let from = info.draggingPasteboard.string(forType: rowType).flatMap(Int.init),
@@ -1674,6 +1619,157 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
         save()
         return true
     }
+}
+
+// MARK: Settings window (⌘,): home page and pinned tabs, saved per app
+final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
+    static let shared = SettingsWindow()
+    private let homeField = NSTextField()
+    private let pinnedEditor = PagesEditor(id: "pinned", load: { App.shared.pinnedPages }, store: { App.shared.pinnedPages = $0 })
+    private let quickEditor = PagesEditor(id: "quick", load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
+    private let colorWell = NSColorWell(style: .default)
+    private let hexField = NSTextField()
+    private let stylePopup = NSPopUpButton()
+
+    init() {
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "\(name) Settings"
+        window.tabbingMode = .disallowed
+        window.minSize = NSSize(width: 480, height: 600)
+        super.init(window: window)
+        window.delegate = self
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let isEscape = event.keyCode == 53, windowNumber = event.windowNumber
+            let handled = isEscape && MainActor.assumeIsolated {
+                guard let self, let window = self.window, window.windowNumber == windowNumber,
+                      !self.pinnedEditor.isEditing, !self.quickEditor.isEditing else { return false }
+                window.performClose(nil)   // Esc
+                return true
+            }
+            return handled ? nil : event
+        }
+
+        homeField.placeholderString = defaultHomeURL.absoluteString
+        homeField.delegate = self
+
+        // Outline colour of pinned tabs: the well opens the colour picker (with an opacity slider)
+        colorWell.target = self
+        colorWell.action = #selector(outlineColorChanged)
+        NSColorPanel.shared.showsAlpha = true
+        let reset = NSButton(title: "Default", target: self, action: #selector(resetOutlineColor))
+        reset.controlSize = .small
+        hexField.placeholderString = "#RRGGBBAA"
+        hexField.toolTip = "#RRGGBB or #RRGGBBAA – the last two digits are the opacity (00 = no outline)"
+        hexField.delegate = self
+        hexField.widthAnchor.constraint(equalToConstant: 92).isActive = true
+        let outlineRow = NSStackView(views: [NSTextField(labelWithString: "Outline colour:"), colorWell, hexField, reset,
+                                             Self.hint("AA = opacity, 00 = none")])
+        outlineRow.spacing = 8
+        stylePopup.addItems(withTitles: PinnedStyle.allCases.map(\.title))
+        stylePopup.target = self
+        stylePopup.action = #selector(styleChanged)
+        let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup])
+        styleRow.spacing = 8
+
+        let stack = NSStackView(views: [
+            Self.heading("Home page"), homeField,
+            Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
+            Self.heading("Pinned tabs"),
+            Self.hint("Open first, in this order, every time the app starts, with a coloured outline. "
+                      + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (icon-only tabs show the name on hover). "
+                      + "They can't be closed or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
+            pinnedEditor.scroll, pinnedEditor.buttons, styleRow, outlineRow,
+            Self.heading("Quick tabs"),
+            Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned tabs "
+                      + "they stay open and locked (⌘W takes one back to its page), but they're not in the tab bar "
+                      + "and ⌃Tab / ⌘1, ⌘2… skip them."),
+            quickEditor.scroll, quickEditor.buttons,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.setCustomSpacing(18, after: stack.views[2])
+        stack.setCustomSpacing(18, after: outlineRow)
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        window.contentView = stack
+        for view in [homeField, pinnedEditor.scroll, quickEditor.scroll]
+                    + stack.views.filter({ $0 is NSTextField && $0 !== homeField }) {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        }
+        for scroll in [pinnedEditor.scroll, quickEditor.scroll] {
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+            scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        }
+        window.center()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func heading(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        return label
+    }
+    private static func hint(_ text: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    @objc private func styleChanged() { App.shared.pinnedStyle = PinnedStyle.allCases[stylePopup.indexOfSelectedItem] }
+
+    func show() {
+        pinnedEditor.reload()
+        quickEditor.reload()
+        stylePopup.selectItem(at: PinnedStyle.allCases.firstIndex(of: App.shared.pinnedStyle) ?? 0)
+        colorWell.color = App.shared.outlineColor
+        hexField.stringValue = App.shared.outlineColor.hexString
+        homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    // Finish an edit that's still in progress when the window closes
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.makeFirstResponder(nil)
+        return true
+    }
+
+    @objc private func outlineColorChanged() {
+        App.shared.outlineColor = colorWell.color
+        hexField.stringValue = App.shared.outlineColor.hexString
+    }
+    @objc private func resetOutlineColor() {
+        UserDefaults.standard.removeObject(forKey: Setting.outlineColor)
+        colorWell.color = App.shared.outlineColor
+        hexField.stringValue = App.shared.outlineColor.hexString
+        App.shared.outlinePinnedTabs()
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        if field === homeField { return saveHome() }
+        if field === hexField {
+            guard let color = NSColor(hex: field.stringValue) else {
+                NSSound.beep()
+                field.stringValue = App.shared.outlineColor.hexString
+                return
+            }
+            App.shared.outlineColor = color
+            colorWell.color = App.shared.outlineColor
+            field.stringValue = App.shared.outlineColor.hexString
+        }
+    }
+    private func saveHome() {
+        let text = homeField.stringValue.trimmingCharacters(in: .whitespaces)
+        if text.isEmpty { return UserDefaults.standard.removeObject(forKey: Setting.homeURL) }
+        guard let url = webURL(from: text) else { return NSSound.beep() }
+        UserDefaults.standard.set(url.absoluteString, forKey: Setting.homeURL)
+        homeField.stringValue = url.absoluteString
+    }
+
 }
 
 // Without an Edit menu, ⌘C/⌘V don't work in a web view.

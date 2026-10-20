@@ -105,6 +105,14 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    A click on empty tab-bar space sends `newWindowForTab:` – `Tab.newWindowForTab` ignores it unless the
    click hit `NSTabBarNewTabButton` (+); ⌘T / menu are keyboard events and pass. Test clicks: post the mouse-up with
    `NSApp.postEvent` *before* `sendEvent(mouseDown)`, or the tracking loop hangs.
+   **Quick tabs** (`quickPages`, key `quickPages`; `PinnedPage.quick == true`): handled as pinned tabs
+   everywhere (`tab.pinned != nil` → locked, no close button, ⌘W resets, skipped by saveSession), ordered
+   after the pinned ones (`allPinnedPages`), plain tab look, always width 0 + hidden in the layout pass (which
+   therefore also runs in the icon-only and full-width styles when quick tabs exist: fixed widths 36 / fit /
+   0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
+   and skip them; the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
+   window). Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
+   item inserts across windows and throws on a duplicate. Settings lists are `PagesEditor` instances.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
    not over a pinned tab (`isPinnedTab(at:in:)`), so clicks are untouched (not verified with a real drag);
