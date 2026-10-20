@@ -89,9 +89,15 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    (`App.tabButtons(in:for:)`). Never set `buttonWidthForTitleLayout` to 0 – it loops the window layout
    ("more Layout Window passes than there are views") – zero-width tabs are `isHidden` instead.
    **Separate row** (`separateRow`): pinned buttons width 0 + hidden, toolbar item `.pinnedSwitcher`
-   (NSSegmentedControl, `Tab.updateToolbar` / `refreshPinnedSwitcher`; toolbars share the "main" identifier,
-   so inserting in one adds to all). `toggleTabBar` does nothing with 2+ tabs, so the bar can't be hidden
-   when only pinned pages are open.
+   (`PinnedSwitcher`: pill NSButtons tinted with `outlineColor`, `Tab.updateToolbar` /
+   `refreshPinnedSwitcher`; toolbars share the "main" identifier, so inserting in one adds to all).
+   The tab bar is hidden while only pinned tabs are open by hiding its NSTitlebarAccessoryViewController
+   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs.
+   **Clicks**: NSTabBar finds the clicked tab arithmetically from its equal-width layout
+   (`_visibleTabIndexAtPoint:stackingRegion:ignorePointsOutsideOfLayoutBounds:`, point in the buttons'
+   row coordinates) → hooked to answer from the real frames whenever kept frames are active
+   (`tabIndex(at:in:)`), else clicks hit the wrong / hidden tabs. Test clicks: post the mouse-up with
+   `NSApp.postEvent` *before* `sendEvent(mouseDown)`, or the tracking loop hangs.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
    not over a pinned tab (`isPinnedTab(at:in:)`), so clicks are untouched (not verified with a real drag);
@@ -139,7 +145,8 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 - Window frames: save on move/resize; on restore with one window prefer `windowFrame` over the session copy.
 - `tools/test.sh` stops on a compile error (it used to re-run the previous binary under `pipefail`). If the
   test app aborts, run `$TMPDIR/webapptabs-test/Test.app/Contents/MacOS/test` directly to see the exception.
-- A synthesised mouse-down on a tab button enters the tab bar's tracking loop and hangs the test.
+- A synthesised mouse-down on a tab button enters the tab bar's tracking loop and hangs the test – unless
+  the mouse-up was queued first with `NSApp.postEvent(up, atStart: false)`.
 - Shell: the scratchpad can be wiped between turns; use `set -euo pipefail`, absolute paths, and
   `"${VAR:?}"` in `rm` (unguarded variables in rm are blocked).
 

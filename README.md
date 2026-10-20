@@ -48,8 +48,9 @@ Window → Merge All Windows · ⌘⇧T reopen closed tab · File → Recently C
 coloured outline (Settings → Outline colour; opacity 0 = none). Each has an **icon** (1–2 letters, an
 emoji, or an SF Symbol name such as `checklist`, `ticket`, `timer`). Settings → **Pinned tabs show**:
 *Icon only* (36 px tabs, name on hover), *Icon and name, compact* (just as wide as icon + name; the other
-tabs get the rest), *Icon and name, full width*, *Name only, full width*, or *Separate row above the tabs*
-(a switcher in the toolbar next to ‹ ›; the tab bar below only has the tabs you opened).
+tabs get the rest), *Icon and name, full width*, *Name only, full width*, or *Separate row above the tabs* (buttons in the
+toolbar next to ‹ ›, tinted with the outline colour; the tab bar below only has the tabs you opened and
+stays hidden until you open one).
 Pinned tabs are locked: no close button, ⌘W does nothing on them (File → Close Tab is greyed out), they
 can't be dragged, and anything that moves them (a tab dropped in between, one pulled into its own window)
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
@@ -71,7 +72,7 @@ Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
 home page, pinned tabs (Icon / Name / Address, **+** / **−**, drag to reorder), how pinned tabs show, outline colour (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
-Restore Tabs and Mute Site are in the app menu.
+Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 
 ## Known limits
 
@@ -80,8 +81,6 @@ Restore Tabs and Mute Site are in the app menu.
 - A site that jumps to another site with its own script (not a link) stays inside the app.
 - Icon-only pinned tabs are a fixed 36 px (macOS's built-in pinned layout). "Icon and name, compact" falls
   back to equal-width tabs when there are so many tabs that the others would get narrower than 100 px.
-- Separate row: with only the pinned pages open, the tab bar stays as an empty row (macOS always shows it
-  for a window with 2+ tabs, and the pinned pages are tabs underneath).
 - Pinned tabs, the outline and icon centring use internal macOS tab-bar views. If a macOS update changes
   them, pinned tabs fall back to normal-width tabs / no outline – nothing else breaks.
 
