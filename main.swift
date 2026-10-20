@@ -1397,6 +1397,9 @@ final class PinnedSwitcher: NSStackView {
 
     func update(pages: [PinnedPage], selected: Int?, color: NSColor) {
         spacing = 6
+        // the toolbar's glass capsule ends exactly at the item's edge – keep the pills inside its rounded
+        // end (26 px pills in a 36 px capsule → 5 px all round)
+        edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 5)
         while arrangedSubviews.count > pages.count { arrangedSubviews.last?.removeFromSuperview() }
         while arrangedSubviews.count < pages.count { addArrangedSubview(Pill()) }
         let rgb = color.usingColorSpace(.sRGB) ?? color
