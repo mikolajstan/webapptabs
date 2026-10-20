@@ -9,6 +9,7 @@ Installed apps (in `~/Applications`, pinned to the Dock):
 |---|---|---|
 | **Netivo Tabs** | https://projekty.netivo.pl/admin/tasks | `Projekty Netivo – Zadania.app` (Safari web app) |
 | **Gmail Tabs** | https://mail.google.com/mail/ | `Gmail.app` (Safari web app) |
+| **GitHub Tabs** | https://github.com/ | `GitHub.app` (Safari web app) |
 | **Link Router** | – | set as the **default web browser**; sends links to the right Tabs app |
 
 ## Building

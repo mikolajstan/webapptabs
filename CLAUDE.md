@@ -20,8 +20,10 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 ## The user's setup (Oct 2026)
 
 - Mac: external monitor (main) + built-in display **below** it → built-in has negative y coordinates.
-- Apps: **Netivo Tabs** (`local.webapptabs.NetivoTabs`, projekty.netivo.pl) and **Gmail Tabs**
-  (`local.webapptabs.GmailTabs`), pinned in the Dock. Old Safari web apps may still exist; make-app.sh only
+- Apps: **Netivo Tabs** (`local.webapptabs.NetivoTabs`, projekty.netivo.pl), **Gmail Tabs**
+  (`local.webapptabs.GmailTabs`) and **GitHub Tabs** (`local.webapptabs.GitHubTabs`, github.com), pinned in
+  the Dock. GitHub Tabs replaced the GitHub Safari web app's Dock tile in place (edited
+  `com.apple.dock persistent-apps` via export → change one tile → import → `killall Dock`). Old Safari web apps may still exist; make-app.sh only
   needs them for a first build.
 - **Link Router** (`local.linkrouter`) is the default web browser.
 - Netivo pinned tabs: ⏱ Timesheets, `checklist` Zadania, `ticket` Tickety, shown as icon + name (compact); Restore Tabs is **off** in Netivo.
