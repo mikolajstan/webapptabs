@@ -56,6 +56,11 @@ can't be dragged, and anything that moves them (a tab dropped in between, one pu
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
 Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.
 
+**Quick tabs** (Settings → Quick tabs, same list editor) – pages you jump to now and then, shown as buttons
+at the right end of the toolbar (before Share), tinted with the outline colour. Like pinned tabs they open
+at launch, stay loaded and are locked (⌘W takes one back to its page), but they never appear in the tab bar
+and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them.
+
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.
 - Restore Tabs on Launch (app menu, per app) – also restores window size, position and display.
@@ -70,7 +75,8 @@ Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.
 ## Settings (⌘,)
 
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
-home page, pinned tabs (Icon / Name / Address, **+** / **−**, drag to reorder), how pinned tabs show, outline colour (colour
+home page, pinned tabs (Icon / Name / Address, **+** / **−**, drag to reorder), how pinned tabs show, outline colour,
+quick tabs (same editor) (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
 Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 

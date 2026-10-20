@@ -40,7 +40,7 @@ if [[ -n $DEFAULTS ]]; then
   python3 - "$ID" "$DEFAULTS" <<'EOF'
 import json, plistlib, subprocess, sys
 settings = json.load(open(sys.argv[2]))
-for key in ('pinnedPages', 'session'):
+for key in ('pinnedPages', 'quickPages', 'session'):
     if key in settings: settings[key] = json.dumps(settings[key]).encode()
 subprocess.run(['defaults', 'import', sys.argv[1], '-'], input=plistlib.dumps(settings), check=True)
 EOF
