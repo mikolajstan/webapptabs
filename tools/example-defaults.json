@@ -1,0 +1,9 @@
+{
+  "restoreTabs": true,
+  "pinnedPages": [
+    {"id": "1", "name": "Timesheets", "url": "https://example.com/?timesheets", "icon": "⏱"},
+    {"id": "2", "name": "Zadania", "url": "https://example.com/?tasks", "icon": "checklist"},
+    {"id": "3", "name": "Tickety", "url": "https://example.com/?tickets", "icon": "ticket"}
+  ],
+  "session": [{"urls": ["https://example.com/?restored"], "selected": 0}]
+}
