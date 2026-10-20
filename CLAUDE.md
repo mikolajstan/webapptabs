@@ -84,6 +84,20 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    others would be < 100 px (macOS then stacks tabs). Snapshots (`cacheDisplay`) draw titles wider than the
    real window – check truncation with `app_zoom`. Tab dragging with this on is not verified (background
    drags arrive as clicks).
+   Buttons/separators are matched to tabs by identity, not x order: NSTabButton.`tabBarViewItem` is the
+   window's `tab.tabBarItem`; separators come from NSTabBar ivar `_tabBarViewItemsToTabSeparators`
+   (`App.tabButtons(in:for:)`). Never set `buttonWidthForTitleLayout` to 0 – it loops the window layout
+   ("more Layout Window passes than there are views") – zero-width tabs are `isHidden` instead.
+   **Separate row** (`separateRow`): pinned buttons width 0 + hidden, toolbar item `.pinnedSwitcher`
+   (NSSegmentedControl, `Tab.updateToolbar` / `refreshPinnedSwitcher`; toolbars share the "main" identifier,
+   so inserting in one adds to all). `toggleTabBar` does nothing with 2+ tabs, so the bar can't be hidden
+   when only pinned pages are open.
+   **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
+   `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
+   not over a pinned tab (`isPinnedTab(at:in:)`), so clicks are untouched (not verified with a real drag);
+   `keepPinnedTabsInPlace()` on every `windows` KVO (after mouse-up) re-inserts pinned windows first, in list
+   order, into the group holding most of them (public API, tested). `windowShouldClose` → false for pinned;
+   File → Close Tab is `App.closeTab(_:)`, validated off for a pinned key window.
 2. **Outline**: finds `NSTabButton` views (private) in the selected window's tab bar, matched to
    `tabGroup.windows` by x order, sets `layer.border*`. Re-run via `outlinePinnedTabs()` (now, next runloop,
    +0.4 s) on selection/windows KVO, pin changes.
@@ -98,6 +112,7 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 ## Decisions already made (don't redo)
 
 - Native macOS tabs, not a custom tab bar (keeps drag-out / merge windows / ⌃Tab).
+- Repo: github.com/mikolajstan/webapptabs (private). Work on a branch, `main` = last known-good build.
 - Pinned tab **width is not configurable**: swizzling `NSTabBar._pinnedTabsWidth`,
   `_frameForButtonAtIndex:…` and `_unstackedFrameForButtonAtIndex:` only resized unpinned tabs; pinned
   frames come from elsewhere. Compact 36 px with icon was chosen instead.
@@ -122,6 +137,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 - `NSApplication.delegate` is weak – keep a strong reference (bit the router once).
 - `log show` doesn't capture NSLog from these ad-hoc apps → debug by writing to a file.
 - Window frames: save on move/resize; on restore with one window prefer `windowFrame` over the session copy.
+- `tools/test.sh` stops on a compile error (it used to re-run the previous binary under `pipefail`). If the
+  test app aborts, run `$TMPDIR/webapptabs-test/Test.app/Contents/MacOS/test` directly to see the exception.
+- A synthesised mouse-down on a tab button enters the tab bar's tracking loop and hangs the test.
 - Shell: the scratchpad can be wiped between turns; use `set -euo pipefail`, absolute paths, and
   `"${VAR:?}"` in `rm` (unguarded variables in rm are blocked).
 

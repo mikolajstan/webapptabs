@@ -85,9 +85,10 @@ enum Setting {
 
 // How pinned tabs look (Settings → Pinned tabs show)
 enum PinnedStyle: String, CaseIterable {
-    case icon, iconAndNameCompact, iconAndName, name
+    case icon, iconAndNameCompact, iconAndName, name, separateRow
     var title: String {
         switch self {
+        case .separateRow: "Separate row above the tabs"
         case .icon: "Icon only (36 px)"
         case .iconAndNameCompact: "Icon and name, compact"
         case .iconAndName: "Icon and name, full width"
@@ -208,6 +209,14 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         item.setValue(style == .icon, forKey: "pinned")
     }
     private let titleLabel = NSTextField(labelWithString: "")
+    private lazy var pinnedSwitcher: NSSegmentedControl = {
+        let control = NSSegmentedControl()
+        control.trackingMode = .selectOne
+        control.segmentDistribution = .fit
+        control.target = self
+        control.action = #selector(pinnedSwitcherClicked(_:))
+        return control
+    }()
 
     init(load url: URL?, configuration: WKWebViewConfiguration) {
         webView = WebView(frame: .zero, configuration: configuration)
@@ -298,11 +307,8 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
     // Remember the tab's place before it leaves the tab bar (for reopening it there)
     private(set) var closingInfo: (title: String?, leftNeighbour: Tab?)?
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // A pinned tab doesn't close: ⌘W / × takes it back to its pinned page
-        if let pinned, !App.shared.isQuitting {
-            if let url = URL(string: pinned.url) { webView.load(URLRequest(url: url)) }
-            return false
-        }
+        // A pinned tab doesn't close (⌘W, the window's ×, Close Other Tabs…)
+        if pinned != nil, !App.shared.isQuitting { return false }
         let group = sender.tabbedWindows ?? []
         let index = group.firstIndex(of: sender) ?? 0
         let left = index > 0 ? App.shared.tabs.first { $0.window === group[index - 1] } : nil
@@ -454,14 +460,16 @@ extension NSToolbarItem.Identifier {
     static let forward = Self("forward")
     static let pageTitle = Self("pageTitle")
     static let share = Self("share")
+    static let pinnedSwitcher = Self("pinnedSwitcher")
 }
 
 extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .flexibleSpace, .pageTitle, .flexibleSpace, .share]
+        [.back, .forward] + (App.shared.pinnedStyle == .separateRow ? [.pinnedSwitcher] : [])
+            + [.flexibleSpace, .pageTitle, .flexibleSpace, .share]
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        [.back, .forward, .pinnedSwitcher, .flexibleSpace, .pageTitle, .share]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -486,6 +494,10 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
             item.isEnabled = back ? webView.canGoBack : webView.canGoForward
         case .pageTitle:
             item.view = titleLabel
+        case .pinnedSwitcher:
+            item.label = "Pinned Tabs"
+            item.view = pinnedSwitcher
+            refreshPinnedSwitcher()
         default:
             return nil
         }
@@ -494,6 +506,36 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         webView.url.map { [$0] } ?? []
+    }
+
+    // "Separate row above the tabs": the pinned pages as one switcher in the toolbar, after ‹ ›.
+    // Toolbars with the same identifier share their items, so inserting it in one window adds it to all.
+    func updateToolbar() {
+        guard let toolbar = window?.toolbar else { return }
+        let index = toolbar.items.firstIndex { $0.itemIdentifier == .pinnedSwitcher }
+        if App.shared.pinnedStyle == .separateRow, index == nil {
+            toolbar.insertItem(withItemIdentifier: .pinnedSwitcher, at: 2)
+        } else if App.shared.pinnedStyle != .separateRow, let index {
+            toolbar.removeItem(at: index)
+        }
+    }
+    func refreshPinnedSwitcher() {
+        let pages = App.shared.pinnedPages
+        pinnedSwitcher.segmentCount = pages.count
+        for (index, page) in pages.enumerated() {
+            pinnedSwitcher.setLabel(page.name, forSegment: index)
+            pinnedSwitcher.setImage(page.iconImage, forSegment: index)
+            pinnedSwitcher.setWidth(0, forSegment: index)   // fit the content
+        }
+        let selected = App.shared.selectedTab?.pinned?.id
+        pinnedSwitcher.selectedSegment = pages.firstIndex { $0.id == selected } ?? -1
+    }
+    @objc private func pinnedSwitcherClicked(_ sender: NSSegmentedControl) {
+        let pages = App.shared.pinnedPages
+        guard pages.indices.contains(sender.selectedSegment),
+              let tab = App.shared.tabs.first(where: { $0.pinned?.id == pages[sender.selectedSegment].id }) else { return }
+        tab.window?.tabGroup?.selectedWindow = tab.window
+        tab.window?.makeKeyAndOrderFront(nil)
     }
 
     func updateNavigationButtons() {
@@ -523,7 +565,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: Setting.pinnedStyle)
-            tabs.forEach { $0.applyPinnedLook() }
+            tabs.forEach { $0.applyPinnedLook(); $0.updateToolbar() }
             layOutTabBars()
             // once tabs that were 36 px have finished growing back
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.layOutTabBars() }
@@ -573,11 +615,15 @@ final class App: NSObject, NSApplicationDelegate {
                 tab.didGetSelected(after: app.selectedTab)
                 app.selectedTab = tab
                 app.outlinePinnedTabs()   // the tab bar now lives in the newly selected window
+                app.tabs.forEach { $0.refreshPinnedSwitcher() }
             }
         }
         // the tab bar is redrawn when tabs are added, closed or dragged into a new order
         outlineObservers[ObjectIdentifier(group)] = group.observe(\.windows) { _, _ in
-            MainActor.assumeIsolated { App.shared.outlinePinnedTabs() }
+            MainActor.assumeIsolated {
+                App.shared.outlinePinnedTabs()
+                App.shared.keepPinnedTabsInPlace()
+            }
         }
     }
     private var outlineObservers: [ObjectIdentifier: NSKeyValueObservation] = [:]
@@ -596,8 +642,7 @@ final class App: NSObject, NSApplicationDelegate {
         for tab in tabs {
             guard let group = tab.window?.tabGroup, done.insert(ObjectIdentifier(group)).inserted,
                   let frameView = (group.selectedWindow ?? tab.window)?.contentView?.superview else { continue }
-            let buttons = Self.tabButtons(in: frameView).sorted { $0.frame.minX < $1.frame.minX }
-            guard buttons.count == group.windows.count else { continue }
+            guard let buttons = Self.tabButtons(in: frameView, for: group.windows) else { continue }
             for (button, window) in zip(buttons, group.windows) {
                 let pinned = tabs.contains { $0.window === window && $0.pinned != nil }
                 button.wantsLayer = true
@@ -637,6 +682,22 @@ final class App: NSObject, NSApplicationDelegate {
     private static func tabButtons(in view: NSView) -> [NSView] {
         String(describing: type(of: view)) == "NSTabButton" ? [view] : view.subviews.flatMap(tabButtons)
     }
+    // The tab bar's buttons in the order of `windows` (each button knows its NSTabBarItem, the same object
+    // as the window's tab.tabBarItem); by position if that's not available. nil if they don't match up.
+    static func tabButtons(in view: NSView, for windows: [NSWindow]) -> [NSView]? {
+        let buttons = tabButtons(in: view)
+        guard buttons.count == windows.count else { return nil }
+        let itemKey = "tabBarViewItem"
+        guard buttons.allSatisfy({ $0.responds(to: NSSelectorFromString(itemKey)) }),
+              windows.allSatisfy({ $0.tab.responds(to: NSSelectorFromString("tabBarItem")) }) else {
+            return buttons.sorted { $0.frame.minX < $1.frame.minX }
+        }
+        let ordered = windows.compactMap { window -> NSView? in
+            let item = window.tab.value(forKey: "tabBarItem") as AnyObject?
+            return buttons.first { $0.value(forKey: itemKey) as AnyObject? === item }
+        }
+        return ordered.count == windows.count ? ordered : nil
+    }
 
     // "Icon and name, compact": macOS gives every normal tab the same width. Right after the tab bar lays
     // itself out (private NSTabBar._layOutButtonsAnimated:) the pinned tabs' frames are worked out to fit
@@ -657,6 +718,43 @@ final class App: NSObject, NSApplicationDelegate {
         }
         method_setImplementation(method, imp_implementationWithBlock(replacement))
         for name in ["NSTabButton", "NSTabSeparator"] { keepFrames(of: name) }
+        refuseDraggingPinnedTabs()
+        hideCloseButtonOfPinnedTabs()
+    }
+    // Pinned tabs can't be closed, so they get no close button (the tab bar asks per tab item)
+    private static func hideCloseButtonOfPinnedTabs() {
+        let selector = NSSelectorFromString("_shouldShowCloseButtonForTabBarViewItem:")
+        guard let tabBar = NSClassFromString("NSTabBar"), let method = class_getInstanceMethod(tabBar, selector) else { return }
+        typealias ShouldShow = @convention(c) (NSView, Selector, AnyObject) -> Bool
+        let original = unsafeBitCast(method_getImplementation(method), to: ShouldShow.self)
+        let replacement: @convention(block) (NSView, AnyObject) -> Bool = { bar, item in
+            original(bar, selector, item) && !MainActor.assumeIsolated {
+                App.shared.tabs.contains { $0.pinned != nil && $0.window?.tab.value(forKey: "tabBarItem") as AnyObject? === item }
+            }
+        }
+        method_setImplementation(method, imp_implementationWithBlock(replacement))
+    }
+    static func ivar(_ name: String, of object: AnyObject) -> Any? {
+        class_getInstanceVariable(type(of: object), name).flatMap { object_getIvar(object, $0) }
+    }
+    // The tab bar asks this once the mouse has moved far enough from a mouse-down on a tab; a pinned
+    // tab answers no, so the press stays a click
+    private static func refuseDraggingPinnedTabs() {
+        let selector = NSSelectorFromString("_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:")
+        guard let tabBar = NSClassFromString("NSTabBar"), let method = class_getInstanceMethod(tabBar, selector) else { return }
+        typealias ShouldDrag = @convention(c) (NSView, Selector, NSEvent, AnyObject?, CGFloat, CGFloat) -> Bool
+        let original = unsafeBitCast(method_getImplementation(method), to: ShouldDrag.self)
+        let replacement: @convention(block) (NSView, NSEvent, AnyObject?, CGFloat, CGFloat) -> Bool = { bar, event, expiration, x, y in
+            original(bar, selector, event, expiration, x, y)
+                && !MainActor.assumeIsolated { App.shared.isPinnedTab(at: event.locationInWindow, in: bar) }
+        }
+        method_setImplementation(method, imp_implementationWithBlock(replacement))
+    }
+    func isPinnedTab(at point: NSPoint, in bar: NSView) -> Bool {
+        guard let windows = bar.window?.tabGroup?.windows else { return false }
+        guard let buttons = Self.tabButtons(in: bar, for: windows),
+              let index = buttons.firstIndex(where: { !$0.isHidden && $0.convert($0.bounds, to: nil).contains(point) }) else { return false }
+        return tabs.contains { $0.window === windows[index] && $0.pinned != nil }
     }
     private static func keepFrames(of className: String) {
         let selector = #selector(setter: NSView.frame)
@@ -682,8 +780,8 @@ final class App: NSObject, NSApplicationDelegate {
         return frame
     }
     private static func isDraggingTab(above view: NSView) -> Bool {
-        guard let bar = enclosingTabBar(of: view), let ivar = class_getInstanceVariable(type(of: bar), "_draggedTabButton") else { return false }
-        return object_getIvar(bar, ivar) != nil
+        guard let bar = enclosingTabBar(of: view) else { return false }
+        return ivar("_draggedTabButton", of: bar) != nil
     }
     private static func enclosingTabBar(of view: NSView) -> NSView? {
         var bar: NSView? = view
@@ -717,44 +815,49 @@ final class App: NSObject, NSApplicationDelegate {
     }
     private func narrowPinnedTabs(in bar: NSView) {
         guard let windows = bar.window?.tabGroup?.windows, !Self.isDraggingTab(above: bar) else { return }
-        let buttons = Self.tabButtons(in: bar).sorted { $0.frame.minX < $1.frame.minX }   // siblings, in tab order
-        guard buttons.count == windows.count, let row = buttons.first?.superview else { return }
-        let separators = row.subviews.filter { String(describing: type(of: $0)) == "NSTabSeparator" }
-            .sorted { $0.frame.minX < $1.frame.minX }   // one at each tab's right edge
-        for view in buttons + separators { Self.keptFrames[ObjectIdentifier(view)] = nil }
-        let compact = pinnedStyle == .iconAndNameCompact
-        let pinnedCount = windows.prefix { w in tabs.contains { $0.window === w && $0.pinned != nil } }.count
-        let closeSelector = NSSelectorFromString("setCanShowCloseButton:")
-        for (index, button) in buttons.enumerated() where button.responds(to: closeSelector) {
-            button.setValue(!(compact && index < pinnedCount), forKey: "canShowCloseButton")
+        guard let buttons = Self.tabButtons(in: bar, for: windows), let row = buttons.first?.superview else { return }   // siblings
+        // one separator per tab; the bar keeps them in tab order (_tabBarViewItemsToTabSeparators)
+        let separatorMap = Self.ivar("_tabBarViewItemsToTabSeparators", of: bar) as? NSMapTable<AnyObject, NSView>
+        let separators: [NSView] = windows.compactMap { window in
+            (window.tab.value(forKey: "tabBarItem") as AnyObject?).flatMap { separatorMap?.object(forKey: $0) }
         }
-        guard compact, pinnedCount > 0 else { return }
+        for view in buttons + separators { Self.keptFrames[ObjectIdentifier(view)] = nil }
+        let separateRow = pinnedStyle == .separateRow
+        let pinnedCount = windows.prefix { w in tabs.contains { $0.window === w && $0.pinned != nil } }.count
+        for button in buttons where button.isHidden { button.isHidden = false }
+        guard pinnedStyle == .iconAndNameCompact || separateRow, pinnedCount > 0 else { return }
         // the tab's content row is 5 | close-button slot 16 | icon 16 + 6 + name (+4) | right slot 16 | 5
         let fits = buttons.prefix(pinnedCount).map { button -> CGFloat in
+            if separateRow { return 0 }   // shown in the toolbar instead
             let spacing = Self.firstStack(in: button)?.spacing ?? 8
             let name = Self.firstLabel(in: button)?.intrinsicContentSize.width ?? 60
             return ceil(2 * (5 + 16 + spacing) + 16 + 6 + name + 4)
         }
-        let gap = buttons.count > 1 ? max(0, buttons[1].frame.minX - buttons[0].frame.maxX) : 0
-        let start = buttons[0].frame.minX, end = buttons[buttons.count - 1].frame.maxX
+        let gap: CGFloat = 1
+        let start: CGFloat = 0, end = row.bounds.width
         let others = buttons.count - pinnedCount
-        let rest = others == 0 ? 0 : (end - start - fits.reduce(0, +) - gap * CGFloat(buttons.count - 1)) / CGFloat(others)
-        guard others == 0 || rest >= 100 else { return }   // crowded: native layout
+        let gaps = gap * CGFloat(buttons.count - 1 - (separateRow ? pinnedCount : 0))
+        let rest = others == 0 ? 0 : (end - start - fits.reduce(0, +) - gaps) / CGFloat(others)
+        // crowded: native layout (with the separate row, never show the pinned tabs in the bar again)
+        guard others == 0 || rest >= (separateRow ? 1 : 100) else { return }
         let barWidth = row.bounds.width, count = row.subviews.count
         var x = start
         for (index, button) in buttons.enumerated() {
             let width = (index < pinnedCount ? fits[index] : rest).rounded(.down)
             Self.keptFrames[ObjectIdentifier(button)] = (x.rounded(), width, barWidth, count)
             if separators.count == buttons.count {
-                Self.keptFrames[ObjectIdentifier(separators[index])] = (x.rounded() + width, separators[index].frame.width, barWidth, count)
+                let line = width == 0 ? 0 : separators[index].frame.width   // no line after a hidden tab
+                Self.keptFrames[ObjectIdentifier(separators[index])] = (x.rounded() + width, line, barWidth, count)
                 separators[index].frame = separators[index].frame   // the setter applies the kept frame
             }
-            x += (index < pinnedCount ? fits[index] : rest) + gap
-            if button.responds(to: NSSelectorFromString("setButtonWidthForTitleLayout:")) {
-                button.setValue(width, forKey: "buttonWidthForTitleLayout")
-            }
+            x += (index < pinnedCount ? fits[index] : rest) + (width == 0 ? 0 : gap)
+            if button.isHidden != (width == 0) { button.isHidden = width == 0 }   // the separate row's pinned tabs
             button.frame = button.frame
-            button.needsLayout = true
+            if width > 0, button.responds(to: NSSelectorFromString("setButtonWidthForTitleLayout:")),
+               (button.value(forKey: "buttonWidthForTitleLayout") as? CGFloat) != width {
+                button.setValue(width, forKey: "buttonWidthForTitleLayout")
+                button.needsLayout = true
+            }
         }
     }
 
@@ -917,8 +1020,47 @@ final class App: NSObject, NSApplicationDelegate {
         }
         if let selected { selected.tabGroup?.selectedWindow = selected }
         keyWindow?.makeKeyAndOrderFront(nil)
+        tabs.forEach { $0.refreshPinnedSwitcher() }
         saveSession()
     }
+
+    // Pinned tabs are locked: first, in list order, together in one window. Drags from a pinned tab are
+    // refused (see hookTabBarLayout); whatever still moves them – a tab dropped in between, a pinned tab
+    // pulled out into its own window – is put back once the mouse is up. Other tabs move freely.
+    private var isKeepingPinnedInPlace = false
+    func keepPinnedTabsInPlace() {
+        guard !isKeepingPinnedInPlace, !isQuitting else { return }
+        isKeepingPinnedInPlace = true
+        DispatchQueue.main.async { [self] in
+            guard NSEvent.pressedMouseButtons == 0 else {   // still dragging: look again in a moment
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.isKeepingPinnedInPlace = false; self.keepPinnedTabsInPlace() }
+                return
+            }
+            defer { isKeepingPinnedInPlace = false }
+            let pinnedTabs = pinnedPages.compactMap { page in tabs.first { $0.pinned?.id == page.id } }
+            // home: the window holding most pinned tabs (then the one with most tabs)
+            let groups = pinnedTabs.compactMap { $0.window?.tabGroup }
+            guard let home = groups.max(by: { a, b in
+                let (pa, pb) = (groups.filter { $0 === a }.count, groups.filter { $0 === b }.count)
+                return pa != pb ? pa < pb : a.windows.count < b.windows.count
+            }) else { return }
+            let inPlace = pinnedTabs.enumerated().allSatisfy { index, tab in
+                home.windows.indices.contains(index) && home.windows[index] === tab.window
+            }
+            guard !inPlace else { return }
+            let keyWindow = NSApp.keyWindow, selected = home.selectedWindow
+            for (index, tab) in pinnedTabs.enumerated() {
+                guard let window = tab.window, home.windows.firstIndex(of: window) != index else { continue }
+                window.tabGroup?.removeWindow(window)
+                home.insertWindow(window, at: min(index, home.windows.count))
+            }
+            if let selected, home.windows.contains(selected) { home.selectedWindow = selected }
+            keyWindow?.makeKeyAndOrderFront(nil)
+            tabs.forEach { $0.applyPinnedLook() }   // a tab dropped into macOS's pinned area gets unpinned again
+            saveSession()
+        }
+    }
+
 
     // MARK: Restore tabs — saved on every page/tab change, so it survives crashes and force quits too
     struct SavedWindow: Codable { var urls: [String]; var selected: Int; var frame: String?; var pinnedSelected: Int? }
@@ -1033,8 +1175,13 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        item.action == #selector(reopenClosedTab(_:)) ? !closedTabs.isEmpty : true
+        switch item.action {
+        case #selector(reopenClosedTab(_:)): !closedTabs.isEmpty
+        case #selector(closeTab(_:)): NSApp.keyWindow.map { key in !tabs.contains { $0.window === key && $0.pinned != nil } } ?? false
+        default: true
+        }
     }
+    @objc func closeTab(_ sender: Any?) { NSApp.keyWindow?.performClose(sender) }
     // File → Recently Closed lists every tab closed this session, newest first
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -1238,8 +1385,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDat
             Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
             Self.heading("Pinned tabs"),
             Self.hint("Open first, in this order, every time the app starts, with a coloured outline. "
-                      + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (compact tabs show the name on hover). "
-                      + "Closing one (⌘W) takes it back to its page instead."),
+                      + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (icon-only tabs show the name on hover). "
+                      + "They can't be closed (⌘W does nothing on them) or dragged; ⌘1, ⌘2… count them first."),
             scroll, buttons, styleRow, outlineRow,
         ])
         stack.orientation = .vertical
@@ -1426,13 +1573,15 @@ func buildMenu() -> NSMenu {
     submenu(name, [settings, .separator(), restore, mute, .separator(),
                    item("Hide \(name)", #selector(NSApplication.hide(_:)), "h"),
                    item("Quit \(name)", #selector(NSApplication.terminate(_:)), "q")])
+    let closeTab = item("Close Tab", #selector(App.closeTab(_:)), "w")   // greyed out on a pinned tab
+    closeTab.target = App.shared
     let reopen = item("Reopen Closed Tab", #selector(App.reopenClosedTab(_:)), "T")
     reopen.target = App.shared
     let recentlyClosed = NSMenuItem(title: "Recently Closed", action: nil, keyEquivalent: "")
     recentlyClosed.submenu = NSMenu(title: "Recently Closed")
     recentlyClosed.submenu?.delegate = App.shared
     submenu("File", [item("New Tab", #selector(NSResponder.newWindowForTab(_:)), "t"),
-                     item("Close Tab", #selector(NSWindow.performClose(_:)), "w"), .separator(),
+                     closeTab, .separator(),
                      reopen, recentlyClosed])
     submenu("Edit", [item("Undo", Selector(("undo:")), "z"), item("Redo", Selector(("redo:")), "Z"), .separator(),
                      item("Cut", #selector(NSText.cut(_:)), "x"), item("Copy", #selector(NSText.copy(_:)), "c"),
