@@ -1172,13 +1172,18 @@ final class App: NSObject, NSApplicationDelegate {
         for tab in tabs {
             guard let window = tab.window, let group = window.tabGroup else { continue }
             // tabs the bar shows: quick tabs never, pinned ones unless they're in the separate row
-            let shown = group.windows.filter { w in
-                guard let page = tabs.first(where: { $0.window === w })?.pinned else { return true }
-                return !page.isQuick && pinnedStyle != .separateRow
-            }.count
-            let hide = pinnedStyle == .separateRow ? shown == 0 : shown <= 1   // like macOS: no bar for a single tab
+            let pages = group.windows.map { w in tabs.first { $0.window === w }?.pinned }
+            let pinnedShown = pages.filter { $0 != nil && $0?.isQuick == false && pinnedStyle != .separateRow }.count
+            let shown = pinnedShown + pages.filter { $0 == nil }.count
+            // like macOS, no bar for a single ordinary tab – but a pinned tab is always shown
+            let hide = shown == 0 || (shown == 1 && pinnedShown == 0)
             for accessory in window.titlebarAccessoryViewControllers where accessory.isHidden != hide {
                 accessory.isHidden = hide
+            }
+            // a window with a single tab (only a pinned one) has no tab bar unless it's toggled on
+            // (View → Show Tab Bar); that only works for a single tab, so it's used just here
+            if group.windows.count == 1, group.isTabBarVisible == hide, window.tabGroup?.selectedWindow === window {
+                window.toggleTabBar(nil)
             }
         }
     }
