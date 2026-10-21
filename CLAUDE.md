@@ -47,8 +47,14 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   key-window events (those don't fire while the app is inactive). `didGetSelected(after:)` drives two
   Safari behaviours: middle-click ordering (`lastOpenedInBackground`) and "closing returns to opener"
   (`returnOnClose`, applied in `windowShouldClose` by pre-selecting the opener).
-- Settings window: `SettingsWindow` (⌘,): home page field, pinned-tabs table (Icon/Name/Address, +/−,
-  drag reorder), "Pinned tabs show" popup, outline colour well + hex field (`NSColor(hex:)` / `.hexString`, kept in sync).
+- Settings window: `SettingsWindow` (⌘,): home page field, "Pinned tabs show" popup, default colour well + hex
+  field (`NSColor(hex:)` / `.hexString`, kept in sync), then an NSSplitView (frame-based panes added with
+  `addSubview` + autoresizing masks, `resizeSubviewsWithOldSize` = proportional with a 130 px minimum;
+  `arrangesAllSubviews` must stay on – off, plain subviews aren't panes and there are no dividers; as
+  arranged subviews with auto layout the panes kept their natural height) holding `PagesEditor` (pinned, quick
+  with Group column) and `GroupColorsEditor`. Per-page `PinnedPage.color` / group `groupColors` (hex) override
+  the default for outlines and toolbar buttons; colour cells use the shared `ColorPicker` (NSColorPanel target,
+  yields to the default colour well while it's active).
   Outline colour is stored as "r g b a" (sRGB) under `pinnedOutlineColor`. Every change saves immediately and calls `App.applyPinnedPages()`
   (pins/unpins/renames/opens tabs, keeps pinned first, restores selection + key window).
 - Launch: `openStartTabs()` = pinned pages, then (if Restore Tabs) saved non-pinned tabs (first saved

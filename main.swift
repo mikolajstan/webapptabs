@@ -79,6 +79,7 @@ enum Setting {
     static let homeURL = "homeURL"   // also read by Link Router
     static let pinnedPages = "pinnedPages"
     static let quickPages = "quickPages"
+    static let groupColors = "quickGroupColors"   // group name → "#RRGGBBAA"
     static let outlineColor = "pinnedOutlineColor"
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
@@ -113,6 +114,9 @@ struct PinnedPage: Codable, Equatable {
     // Quick tabs with the same group name share one toolbar button that opens a menu of them
     var group: String?
     var groupName: String? { group.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } }
+    // Its own outline / button colour ("#RRGGBBAA"); nil = Settings → Default colour
+    var color: String?
+    var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -563,8 +567,10 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func refreshPinnedSwitcher() {
         let selected = App.shared.selectedTab?.pinned?.id, color = App.shared.outlineColor
         let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
+        let groupColors = App.shared.groupColors.compactMapValues(NSColor.init(hex:))
         pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color)
-        quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color)
+        quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color,
+                             groupColors: groupColors)
         // when the window is too narrow the toolbar moves them into its » menu, which uses these
         for item in window?.toolbar?.items ?? [] {
             guard let switcher = item.view as? PinnedSwitcher else { continue }
@@ -689,9 +695,10 @@ final class App: NSObject, NSApplicationDelegate {
                   let frameView = (group.selectedWindow ?? tab.window)?.contentView?.superview else { continue }
             guard let buttons = Self.tabButtons(in: frameView, for: group.windows) else { continue }
             for (button, window) in zip(buttons, group.windows) {
-                let pinned = tabs.contains { $0.window === window && $0.pinned != nil }
+                let page = tabs.first { $0.window === window }?.pinned
+                let pinned = page != nil
                 button.wantsLayer = true
-                button.layer?.borderColor = outlineColor.cgColor
+                button.layer?.borderColor = (page?.tint ?? outlineColor).cgColor
                 button.layer?.borderWidth = pinned ? 1.5 : 0
                 button.layer?.cornerRadius = button.bounds.height / 2
                 centerPinnedIcon(in: button, pinned: pinned && pinnedStyle == .icon)
@@ -1068,6 +1075,14 @@ final class App: NSObject, NSApplicationDelegate {
     var quickPages: [PinnedPage] {
         get { Self.pages(Setting.quickPages, quick: true) }
         set { Self.store(newValue, Setting.quickPages, quick: true); applyPinnedPages() }
+    }
+    // Colours of the quick tab group buttons (group name → hex); a group without one uses the default colour
+    var groupColors: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: Setting.groupColors) as? [String: String] ?? [:] }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Setting.groupColors)
+            tabs.forEach { $0.refreshPinnedSwitcher() }
+        }
     }
     // the order the tabs keep: pinned first, then the quick tabs
     var allPinnedPages: [PinnedPage] { pinnedPages + quickPages }
@@ -1503,7 +1518,8 @@ final class PinnedSwitcher: NSStackView {
         return entries
     }
 
-    func update(pages: [PinnedPage], selected: Int?, color: NSColor) {
+    // color: the default; a page's own colour, or its group's, wins
+    func update(pages: [PinnedPage], selected: Int?, color: NSColor, groupColors: [String: NSColor] = [:]) {
         self.pages = pages
         self.selected = selected
         spacing = 6
@@ -1513,11 +1529,12 @@ final class PinnedSwitcher: NSStackView {
         let entries = entries
         while arrangedSubviews.count > entries.count { arrangedSubviews.last?.removeFromSuperview() }
         while arrangedSubviews.count < entries.count { addArrangedSubview(Pill()) }
-        let rgb = color.usingColorSpace(.sRGB) ?? color
-        let alpha = rgb.alphaComponent
         for (view, entry) in zip(arrangedSubviews, entries) {
             guard let pill = view as? Pill else { continue }
             let isSelected = selected.map(entry.indices.contains) ?? false
+            let own = entry.group.map { groupColors[$0] } ?? pages[entry.indices[0]].tint
+            let rgb = (own ?? color).usingColorSpace(.sRGB) ?? color
+            let alpha = rgb.alphaComponent
             if let group = entry.group {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
@@ -1580,6 +1597,73 @@ final class PinnedSwitcher: NSStackView {
     @objc private func picked(_ item: NSMenuItem) { onSelect?(item.tag) }
 }
 
+// The shared colour panel, driven by one colour cell at a time (Settings lists). The Default colour well
+// uses the same panel; while it's active, changes are left to it.
+@MainActor
+final class ColorPicker: NSObject {
+    static let shared = ColorPicker()
+    var willPick: () -> Void = {}            // e.g. deactivate the Default colour well
+    var isBlocked: () -> Bool = { false }    // the Default colour well took the panel over
+    private var onChange: ((NSColor) -> Void)?
+
+    func pick(_ color: NSColor, onChange: @escaping (NSColor) -> Void) {
+        willPick()
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = true
+        self.onChange = nil
+        panel.color = color
+        self.onChange = onChange
+        panel.setTarget(self)
+        panel.setAction(#selector(changed(_:)))
+        panel.orderFront(nil)
+    }
+    func stop() {
+        onChange = nil
+        NSColorPanel.shared.setTarget(nil)
+        NSColorPanel.shared.setAction(nil)
+    }
+    @objc private func changed(_ panel: NSColorPanel) {
+        if isBlocked() { return stop() }
+        onChange?(panel.color)
+    }
+}
+
+// A colour cell: swatch (click → colour panel) + "#RRGGBBAA" field; empty = the default colour
+@MainActor
+func colorCell(hex: String?, row: Int, target: AnyObject, swatchAction: Selector, delegate: NSTextFieldDelegate) -> NSView {
+    let swatch = NSButton(title: "", target: target, action: swatchAction)
+    swatch.isBordered = false
+    swatch.tag = row
+    swatch.wantsLayer = true
+    swatch.layer?.cornerRadius = 4
+    swatch.layer?.borderWidth = 1
+    swatch.layer?.borderColor = NSColor.separatorColor.cgColor
+    let color = hex.flatMap(NSColor.init(hex:))
+    swatch.layer?.backgroundColor = (color ?? App.shared.outlineColor.withAlphaComponent(0.25)).cgColor
+    swatch.toolTip = "Pick a colour"
+    swatch.widthAnchor.constraint(equalToConstant: 22).isActive = true
+    swatch.heightAnchor.constraint(equalToConstant: 14).isActive = true
+    let field = NSTextField(string: color?.hexString ?? "")
+    field.placeholderString = "default"
+    field.identifier = .init("color")
+    field.isBordered = false
+    field.drawsBackground = false
+    field.delegate = delegate
+    field.toolTip = "#RRGGBB or #RRGGBBAA; empty = the default colour"
+    let cell = NSStackView(views: [swatch, field])
+    cell.spacing = 5
+    cell.alignment = .top   // text on the same line as the other columns' text
+    cell.edgeInsets = NSEdgeInsets(top: 1, left: 0, bottom: 0, right: 0)
+    return cell
+}
+/// "" → nil (default), a valid colour → its hex, anything else → .invalid
+enum ColorInput { case clear, color(String), invalid }
+func parseColor(_ text: String) -> ColorInput {
+    let text = text.trimmingCharacters(in: .whitespaces)
+    if text.isEmpty { return .clear }
+    return NSColor(hex: text).map { .color($0.hexString) } ?? .invalid
+}
+
 // A list of pages (Icon | Name | Address) with + / − and drag to reorder; every change is saved right away.
 // Used twice in Settings: pinned tabs and quick tabs.
 @MainActor
@@ -1598,8 +1682,9 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
         super.init()
         let columns = groups
-            ? [("icon", "Icon", 70.0), ("name", "Name", 110.0), ("group", "Group", 90.0), ("url", "Address", 300.0)]
-            : [("icon", "Icon", 80.0), ("name", "Name", 120.0), ("url", "Address", 350.0)]
+            ? [("icon", "Icon", 64.0), ("name", "Name", 100.0), ("group", "Group", 80.0), ("color", "Colour", 110.0),
+               ("url", "Address", 240.0)]
+            : [("icon", "Icon", 64.0), ("name", "Name", 110.0), ("color", "Colour", 110.0), ("url", "Address", 300.0)]
         for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -1627,12 +1712,25 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         buttons.spacing = 6
     }
 
+    var onSave: (() -> Void)?
     var isEditing: Bool { table.editedRow >= 0 }
     func reload() {
         pages = load()
         table.reloadData()
     }
-    private func save() { store(pages) }
+    private func save() { store(pages); onSave?() }
+
+    @objc private func pickColor(_ swatch: NSButton) {
+        let row = swatch.tag
+        guard pages.indices.contains(row) else { return }
+        let id = pages[row].id
+        ColorPicker.shared.pick(pages[row].tint ?? App.shared.outlineColor) { [weak self] color in
+            guard let self, let row = self.pages.firstIndex(where: { $0.id == id }) else { return }
+            self.pages[row].color = color.hexString
+            self.table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(0..<self.table.numberOfColumns))
+            self.save()
+        }
+    }
 
     @objc private func addPage() {
         let tab = App.shared.frontTab   // start from the page you're on
@@ -1665,6 +1763,12 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         } else if field.identifier?.rawValue == "group" {
             pages[row].group = field.stringValue
             pages[row].group = pages[row].groupName   // trimmed, nil when empty
+        } else if field.identifier?.rawValue == "color" {
+            switch parseColor(field.stringValue) {
+            case .clear: pages[row].color = nil
+            case .color(let hex): pages[row].color = hex
+            case .invalid: NSSound.beep()
+            }
         } else if let url = webURL(from: field.stringValue) {
             pages[row].url = url.absoluteString
         } else {
@@ -1680,6 +1784,9 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         let id = column?.identifier.rawValue ?? "name"
         let page = pages[row]
+        if id == "color" {
+            return colorCell(hex: page.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
+        }
         let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name
                                     : id == "group" ? page.groupName ?? "" : page.url)
         if id == "icon" { field.alignment = .center }
@@ -1715,30 +1822,91 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     }
 }
 
+// Colours of the quick tab groups: one row per group name used in the quick tabs list
+@MainActor
+final class GroupColorsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    let table = NSTableView()
+    let scroll = NSScrollView()
+    private var groups: [String] = []
+
+    override init() {
+        super.init()
+        for (id, title, width) in [("group", "Group", 160.0), ("color", "Colour", 140.0)] {
+            let column = NSTableColumn(identifier: .init(id))
+            column.title = title
+            column.width = width
+            table.addTableColumn(column)
+        }
+        table.dataSource = self
+        table.delegate = self
+        table.rowHeight = 24
+        table.usesAlternatingRowBackgroundColors = true
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+    }
+    var isEditing: Bool { table.editedRow >= 0 }
+    func reload() {
+        var seen = Set<String>()
+        groups = App.shared.quickPages.compactMap(\.groupName).filter { seen.insert($0).inserted }
+        table.reloadData()
+    }
+    private func setColor(_ hex: String?, for group: String) {
+        var colors = App.shared.groupColors
+        colors[group] = hex
+        App.shared.groupColors = colors
+        if let row = groups.firstIndex(of: group) { table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1]) }
+    }
+    @objc private func pickColor(_ swatch: NSButton) {
+        guard let group = groups[safe: swatch.tag] else { return }
+        let current = App.shared.groupColors[group].flatMap(NSColor.init(hex:)) ?? App.shared.outlineColor
+        ColorPicker.shared.pick(current) { [weak self] color in self?.setColor(color.hexString, for: group) }
+    }
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField, let group = groups[safe: table.row(for: field)] else { return }
+        switch parseColor(field.stringValue) {
+        case .clear: setColor(nil, for: group)
+        case .color(let hex): setColor(hex, for: group)
+        case .invalid: NSSound.beep()
+        }
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { groups.count }
+    func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
+        let group = groups[row]
+        if column?.identifier.rawValue == "color" {
+            return colorCell(hex: App.shared.groupColors[group], row: row, target: self,
+                             swatchAction: #selector(pickColor(_:)), delegate: self)
+        }
+        return NSTextField(labelWithString: group + " ▾")
+    }
+}
+
 // MARK: Settings window (⌘,): home page and pinned tabs, saved per app
-final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
+final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, NSSplitViewDelegate {
     static let shared = SettingsWindow()
     private let homeField = NSTextField()
     private let pinnedEditor = PagesEditor(id: "pinned", load: { App.shared.pinnedPages }, store: { App.shared.pinnedPages = $0 })
     private let quickEditor = PagesEditor(id: "quick", groups: true, load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
+    private let groupEditor = GroupColorsEditor()
     private let colorWell = NSColorWell(style: .default)
     private let hexField = NSTextField()
     private let stylePopup = NSPopUpButton()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 780),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(name) Settings"
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 480, height: 600)
+        window.minSize = NSSize(width: 560, height: 620)
         super.init(window: window)
         window.delegate = self
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let isEscape = event.keyCode == 53, windowNumber = event.windowNumber
             let handled = isEscape && MainActor.assumeIsolated {
                 guard let self, let window = self.window, window.windowNumber == windowNumber,
-                      !self.pinnedEditor.isEditing, !self.quickEditor.isEditing else { return false }
+                      !self.pinnedEditor.isEditing, !self.quickEditor.isEditing, !self.groupEditor.isEditing
+                else { return false }
                 window.performClose(nil)   // Esc
                 return true
             }
@@ -1758,48 +1926,125 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         hexField.toolTip = "#RRGGBB or #RRGGBBAA – the last two digits are the opacity (00 = no outline)"
         hexField.delegate = self
         hexField.widthAnchor.constraint(equalToConstant: 92).isActive = true
-        let outlineRow = NSStackView(views: [NSTextField(labelWithString: "Outline colour:"), colorWell, hexField, reset,
-                                             Self.hint("AA = opacity, 00 = none")])
+        let outlineRow = NSStackView(views: [NSTextField(labelWithString: "Default colour:"), colorWell, hexField, reset,
+                                             Self.hint("outlines and buttons without their own Colour; AA = opacity")])
         outlineRow.spacing = 8
         stylePopup.addItems(withTitles: PinnedStyle.allCases.map(\.title))
         stylePopup.target = self
         stylePopup.action = #selector(styleChanged)
         let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup])
         styleRow.spacing = 8
+        ColorPicker.shared.willPick = { [weak self] in self?.colorWell.deactivate() }
+        ColorPicker.shared.isBlocked = { [weak self] in self?.colorWell.isActive ?? false }
+        quickEditor.onSave = { [weak self] in self?.groupEditor.reload() }   // group names may have changed
 
+        // The three lists, with draggable dividers between them (sizes remembered). The panes are added as
+        // plain subviews with autoresizing masks, so the split view sets their frames (as arranged subviews
+        // with auto layout it held them at their natural height). arrangesAllSubviews must stay on: off, the
+        // subviews aren't panes at all and there are no dividers.
+        let split = NSSplitView()
+        split.isVertical = false
+        split.dividerStyle = .paneSplitter
+        split.delegate = self
+        let groupsHeading = Self.heading("Quick tab group colours")
+        for pane in [
+            Self.pane([Self.heading("Pinned tabs"),
+                       Self.hint("Open first, in this order, every time the app starts, outlined in their Colour. "
+                                 + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist. They can't be closed "
+                                 + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
+                       pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
+            Self.pane([Self.heading("Quick tabs"),
+                       Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
+                                 + "tabs they stay open and locked (⌘W takes one back to its page), but they're not in the "
+                                 + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them. Pages with the same Group share one button with a menu."),
+                       quickEditor.scroll, quickEditor.buttons], grow: quickEditor.scroll),
+            Self.pane([groupsHeading, Self.hint("One row per Group used above; empty Colour = the default colour."),
+                       groupEditor.scroll], grow: groupEditor.scroll),
+        ] {
+            pane.translatesAutoresizingMaskIntoConstraints = true
+            pane.autoresizingMask = [.width, .height]
+            split.addSubview(pane)
+        }
+        split.autosaveName = "settingsLists"
+
+        // settings at the top; the lists' split view pinned below them down to the bottom, so it gets all
+        // the height the window has left (as a stack view arranged subview it kept its natural height)
         let stack = NSStackView(views: [
             Self.heading("Home page"), homeField,
             Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
-            Self.heading("Pinned tabs"),
-            Self.hint("Open first, in this order, every time the app starts, with a coloured outline. "
-                      + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist (icon-only tabs show the name on hover). "
-                      + "They can't be closed or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
-            pinnedEditor.scroll, pinnedEditor.buttons, styleRow, outlineRow,
-            Self.heading("Quick tabs"),
-            Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned tabs "
-                      + "they stay open and locked (⌘W takes one back to its page), but they're not in the tab bar "
-                      + "and ⌃Tab / ⌘1, ⌘2… skip them. Pages with the same Group share one button with a menu."),
-            quickEditor.scroll, quickEditor.buttons,
+            styleRow, outlineRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
         stack.setCustomSpacing(18, after: stack.views[2])
-        stack.setCustomSpacing(18, after: outlineRow)
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-        window.contentView = stack
-        for view in [homeField, pinnedEditor.scroll, quickEditor.scroll]
-                    + stack.views.filter({ $0 is NSTextField && $0 !== homeField }) {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        let root = NSView()
+        for view in [stack, split] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(view)
         }
-        for scroll in [pinnedEditor.scroll, quickEditor.scroll] {
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-            scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            split.topAnchor.constraint(equalTo: stack.bottomAnchor, constant: 12),
+            split.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            split.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            split.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+        ])
+        window.contentView = root
+        for view in [homeField, stack.views[2]] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         window.center()
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    // Each list keeps at least a few rows; the window grows/shrinks them in proportion
+    static let minPaneHeight: CGFloat = 130
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+        splitView.subviews[index].frame.minY + Self.minPaneHeight
+    }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+        splitView.subviews[index + 1].frame.maxY - Self.minPaneHeight - splitView.dividerThickness
+    }
+    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        // proportional, but never below the minimum (taken from the largest pane)
+        let panes = splitView.subviews, divider = splitView.dividerThickness
+        let available = splitView.bounds.height - divider * CGFloat(panes.count - 1)
+        let oldTotal = panes.reduce(0) { $0 + $1.frame.height }
+        // first layout: pinned and quick tabs 2 parts each, group colours 1
+        let weights = oldTotal > 1 ? panes.map(\.frame.height) : panes.indices.map { $0 == 2 ? 1 : 2 }
+        let weightTotal = weights.reduce(0, +)
+        var heights = weights.map { max(Self.minPaneHeight, ($0 / weightTotal * available).rounded()) }
+        if let biggest = heights.indices.max(by: { heights[$0] < heights[$1] }) {
+            heights[biggest] += available - heights.reduce(0, +)
+        }
+        var y: CGFloat = 0
+        for (pane, height) in zip(panes, heights) {
+            pane.frame = NSRect(x: 0, y: y, width: splitView.bounds.width, height: max(0, height))
+            y += height + divider
+        }
+    }
+
+    // a pane of the lists' split view: its views stacked, `grow` (the table) taking the pane's spare height
+    private static func pane(_ views: [NSView], grow: NSScrollView) -> NSView {
+        let pane = NSStackView(views: views)
+        pane.orientation = .vertical
+        pane.distribution = .fill   // the table (lowest hugging) takes the spare height
+        pane.alignment = .leading
+        pane.spacing = 6
+        pane.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        for view in views where view is NSScrollView || (view as? NSTextField)?.cell?.wraps == true {
+            view.widthAnchor.constraint(equalTo: pane.widthAnchor).isActive = true
+        }
+        let minimum = grow.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
+        minimum.priority = .init(999)
+        minimum.isActive = true
+        grow.setContentHuggingPriority(.init(1), for: .vertical)
+        grow.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        return pane
+    }
     private static func heading(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -1817,6 +2062,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     func show() {
         pinnedEditor.reload()
         quickEditor.reload()
+        groupEditor.reload()
         stylePopup.selectItem(at: PinnedStyle.allCases.firstIndex(of: App.shared.pinnedStyle) ?? 0)
         colorWell.color = App.shared.outlineColor
         hexField.stringValue = App.shared.outlineColor.hexString
@@ -1828,18 +2074,26 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     // Finish an edit that's still in progress when the window closes
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.makeFirstResponder(nil)
+        ColorPicker.shared.stop()
         return true
     }
 
     @objc private func outlineColorChanged() {
         App.shared.outlineColor = colorWell.color
         hexField.stringValue = App.shared.outlineColor.hexString
+        refreshDefaultSwatches()
     }
     @objc private func resetOutlineColor() {
         UserDefaults.standard.removeObject(forKey: Setting.outlineColor)
         colorWell.color = App.shared.outlineColor
         hexField.stringValue = App.shared.outlineColor.hexString
         App.shared.outlinePinnedTabs()
+        App.shared.tabs.forEach { $0.refreshPinnedSwitcher() }
+        refreshDefaultSwatches()
+    }
+    // rows without their own colour show the default one
+    private func refreshDefaultSwatches() {
+        [pinnedEditor.table, quickEditor.table, groupEditor.table].forEach { $0.reloadData() }
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
@@ -1854,6 +2108,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
             App.shared.outlineColor = color
             colorWell.color = App.shared.outlineColor
             field.stringValue = App.shared.outlineColor.hexString
+            refreshDefaultSwatches()
         }
     }
     private func saveHome() {

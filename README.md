@@ -80,8 +80,11 @@ the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 ## Settings (⌘,)
 
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
-home page, pinned tabs (Icon / Name / Address, **+** / **−**, drag to reorder), how pinned tabs show, outline colour,
-quick tabs (same editor) (colour
+home page, how pinned tabs show, the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA
+is the opacity), then three lists with draggable dividers between them: pinned tabs and quick tabs (Icon / Name /
+(Group) / **Colour** / Address, **+** / **−**, drag to reorder) and quick tab group colours. A page's or group's
+Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
+toolbar button's tint. (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
 Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 

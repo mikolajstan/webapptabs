@@ -10,6 +10,14 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   toolbar button, `Group ▾`, that opens a menu of them. The button shows the open page's icon and is
   highlighted while one of its pages is open, and the menu ticks the open page.
 
+- **Colours per tab**: a Colour column in the pinned and quick tab lists, and a "Quick tab group colours"
+  list. A page's or group's colour (swatch → colour picker, or hex) is its outline in the tab bar and its
+  toolbar button's tint; empty uses the default colour (the former "Outline colour").
+
+### Changed
+- Settings: the pinned tabs, quick tabs and group colours lists sit in a split view with draggable dividers,
+  and all of them grow with the window (before, only the pinned list did).
+
 ### Fixed
 - When the window is too narrow and the toolbar moves the quick tabs (or the separate-row pinned tabs) into
   its » menu, that menu entry now lists the pages (groups as submenus). Before, it did nothing.
