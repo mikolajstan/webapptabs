@@ -60,7 +60,9 @@ Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.
 **Quick tabs** (Settings → Quick tabs, same list editor) – pages you jump to now and then, shown as buttons
 at the right end of the toolbar (before Share), tinted with the outline colour. Like pinned tabs they open
 at launch, stay loaded and are locked (⌘W takes one back to its page), but they never appear in the tab bar
-and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them.
+and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
+to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
+pinned tab rather than a quick one.
 
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.
