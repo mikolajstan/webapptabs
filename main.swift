@@ -120,6 +120,16 @@ struct QuickGroup: Codable, Equatable {
     var name: String
     var color: String?   // "#RRGGBBAA"; nil = the default colour
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
+    var width: Double?   // the button's width in points; nil = automatic
+}
+
+// Settings → Width cells: points, 24…800; empty = automatic
+enum WidthInput { case clear, width(Double), invalid }
+func parseWidth(_ text: String) -> WidthInput {
+    let text = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "px", with: "").replacingOccurrences(of: "pt", with: "")
+    if text.isEmpty { return .clear }
+    guard let value = Double(text.replacingOccurrences(of: ",", with: ".")) else { return .invalid }
+    return .width(min(800, max(24, value.rounded())))
 }
 
 // A page that always opens first, as a pinned tab (Settings → Pinned tabs)
@@ -140,6 +150,8 @@ struct PinnedPage: Codable, Equatable {
     // Its own outline / button colour ("#RRGGBBAA"); nil = Settings → Default colour
     var color: String?
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
+    // Its own width in points (tab in the tab bar / toolbar button); nil = automatic
+    var width: Double?
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -925,13 +937,15 @@ final class App: NSObject, NSApplicationDelegate {
         let pinnedCount = pages.prefix { $0 != nil }.count
         let hasQuick = pages.contains { $0?.isQuick == true }
         for button in buttons where button.isHidden { button.isHidden = false }
-        guard pinnedStyle == .iconAndNameCompact || separateRow || hasQuick, pinnedCount > 0 else { return }
+        let hasOwnWidth = !separateRow && pages.contains { $0?.width != nil && $0?.isQuick == false }
+        guard pinnedStyle == .iconAndNameCompact || separateRow || hasQuick || hasOwnWidth, pinnedCount > 0 else { return }
         // fixed widths: quick tabs and the separate row's pinned tabs 0 (hidden), icon-only 36, compact
         // icon + name: what the tab's content row needs (5 | close slot 16 | icon 16 + 6 + name (+4) | slot 16 | 5);
         // nil = shares what's left (normal tabs, full-width pinned tabs)
         let fixed = buttons.indices.map { index -> CGFloat? in
             guard index < pinnedCount, let page = pages[index] else { return nil }
             if page.isQuick || separateRow { return 0 }
+            if let width = page.width { return CGFloat(width) }   // Settings → Width
             switch pinnedStyle {
             case .icon: return 36
             case .iconAndNameCompact:
@@ -1538,6 +1552,14 @@ final class PinnedSwitcher: NSStackView {
         let icon = NSImageView()
         let label = NSTextField(labelWithString: "")
         var onPress: (() -> Void)?
+        // Settings → Width; nil = as wide as the content
+        var fixedWidth: CGFloat? {
+            didSet {
+                widthConstraint.constant = fixedWidth ?? 0
+                widthConstraint.isActive = fixedWidth != nil
+            }
+        }
+        private lazy var widthConstraint = widthAnchor.constraint(equalToConstant: 0)
 
         init() {
             super.init(frame: .zero)
@@ -1546,7 +1568,10 @@ final class PinnedSwitcher: NSStackView {
             layer?.borderWidth = 1
             icon.contentTintColor = .labelColor
             label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-            let row = NSStackView(views: [icon, label])
+            label.lineBreakMode = .byTruncatingTail   // a narrow fixed width shortens the name…
+            label.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+            let row = NSStackView()
+            row.setViews([icon, label], in: .center)   // centred when a set Width is wider than the content
             row.spacing = 5
             row.edgeInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 12)
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -1566,6 +1591,15 @@ final class PinnedSwitcher: NSStackView {
             if bounds.contains(convert(event.locationInWindow, from: nil)) { onPress?() }
         }
         override func accessibilityPerformPress() -> Bool { onPress?(); return true }
+        // …and when even that doesn't fit next to the icon, only the icon shows (the name is in the tooltip)
+        func fitLabel(fullText: String, short: String?) {
+            guard let width = fixedWidth, !icon.isHidden, !label.isHidden else { return }
+            label.stringValue = fullText
+            let needed = 11 + 16 + 5 + label.intrinsicContentSize.width + 12
+            if width < needed {
+                if let short { label.stringValue = short } else { label.isHidden = true }
+            }
+        }
     }
 
     private var pages: [PinnedPage] = []
@@ -1613,6 +1647,8 @@ final class PinnedSwitcher: NSStackView {
                 pill.icon.isHidden = show == .name
                 let names = entry.indices.map { pages[$0].name }.joined(separator: ", ")
                 pill.toolTip = show == .icon ? "\(group.name): \(names)" : names
+                pill.fixedWidth = group.width.map { CGFloat($0) }
+                pill.fitLabel(fullText: pill.label.stringValue, short: "▾")
                 pill.setAccessibilityLabel(group.name)
                 pill.onPress = { [weak self, weak pill] in
                     guard let self, let pill else { return }
@@ -1625,6 +1661,8 @@ final class PinnedSwitcher: NSStackView {
                 pill.icon.isHidden = show == .name
                 pill.label.isHidden = show == .icon
                 pill.toolTip = show == .icon ? "\(page.name) – \(page.url)" : page.url
+                pill.fixedWidth = page.width.map { CGFloat($0) }
+                pill.fitLabel(fullText: page.name, short: nil)
                 pill.setAccessibilityLabel(page.name)
                 pill.onPress = { [weak self] in self?.onSelect?(index) }
             }
@@ -1760,9 +1798,10 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
         super.init()
         let columns = groups != nil
-            ? [("icon", "Icon", 64.0), ("name", "Name", 100.0), ("group", "Group", 110.0), ("color", "Colour", 110.0),
-               ("url", "Address", 220.0)]
-            : [("icon", "Icon", 64.0), ("name", "Name", 110.0), ("color", "Colour", 110.0), ("url", "Address", 300.0)]
+            ? [("icon", "Icon", 56.0), ("name", "Name", 100.0), ("group", "Group", 100.0), ("color", "Colour", 106.0),
+               ("width", "Width", 52.0), ("url", "Address", 180.0)]
+            : [("icon", "Icon", 56.0), ("name", "Name", 110.0), ("color", "Colour", 106.0), ("width", "Width", 52.0),
+               ("url", "Address", 250.0)]
         for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -1850,6 +1889,12 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
             case .color(let hex): pages[row].color = hex
             case .invalid: NSSound.beep()
             }
+        } else if field.identifier?.rawValue == "width" {
+            switch parseWidth(field.stringValue) {
+            case .clear: pages[row].width = nil
+            case .width(let width): pages[row].width = width
+            case .invalid: NSSound.beep()
+            }
         } else if let url = webURL(from: field.stringValue) {
             pages[row].url = url.absoluteString
         } else {
@@ -1884,8 +1929,14 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
             popup.action = #selector(groupChosen(_:))
             return popup
         }
-        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name : page.url)
+        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name
+                                    : id == "width" ? page.width.map { String(Int($0)) } ?? "" : page.url)
         if id == "icon" { field.alignment = .center }
+        if id == "width" {
+            field.placeholderString = "auto"
+            field.alignment = .right
+            field.toolTip = "Width in points (24–800); empty = automatic"
+        }
         field.identifier = .init(id)
         field.isBordered = false
         field.drawsBackground = false
@@ -1928,7 +1979,7 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     override init() {
         super.init()
-        for (id, title, width) in [("name", "Name", 200.0), ("color", "Colour", 140.0)] {
+        for (id, title, width) in [("name", "Name", 200.0), ("color", "Colour", 140.0), ("width", "Width", 60.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
             column.width = width
@@ -1998,11 +2049,17 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             case .color(let hex): groups[row].color = hex
             case .invalid: NSSound.beep()
             }
+        } else if field.identifier?.rawValue == "width" {
+            switch parseWidth(field.stringValue) {
+            case .clear: groups[row].width = nil
+            case .width(let width): groups[row].width = width
+            case .invalid: NSSound.beep()
+            }
         } else {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             groups[row].name = name.isEmpty ? groups[row].name : name
         }
-        table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1])
+        table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(0..<table.numberOfColumns))
         save()
     }
     func numberOfRows(in tableView: NSTableView) -> Int { groups.count }
@@ -2011,8 +2068,14 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if column?.identifier.rawValue == "color" {
             return colorCell(hex: group.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
-        let field = NSTextField(string: group.name)
-        field.identifier = .init("name")
+        let isWidth = column?.identifier.rawValue == "width"
+        let field = NSTextField(string: isWidth ? group.width.map { String(Int($0)) } ?? "" : group.name)
+        field.identifier = .init(isWidth ? "width" : "name")
+        if isWidth {
+            field.placeholderString = "auto"
+            field.alignment = .right
+            field.toolTip = "Width in points (24–800); empty = automatic"
+        }
         field.isBordered = false
         field.drawsBackground = false
         field.delegate = self

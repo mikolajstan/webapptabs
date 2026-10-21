@@ -20,6 +20,10 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   icon only or name only – set separately (Settings → next to "Pinned tabs show", and "Buttons show" under
   the quick tabs). Hidden names show on hover.
 
+- **Widths per tab**: a Width column (points; empty = automatic) for pinned tabs, quick tab groups and
+  quick tabs. It sets a pinned tab's width in the tab bar (in every style) or the toolbar button's width; a
+  button too narrow for its icon and name shows just the icon, and content is centred in a wider button.
+
 ### Changed
 - Settings: the pinned tabs, quick tab groups and quick tabs lists sit in a split view with draggable dividers,
   and all of them grow with the window (before, only the pinned list did).

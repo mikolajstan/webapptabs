@@ -86,7 +86,8 @@ home page, how pinned tabs show, the **default colour** (colour picker, or hex `
 is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
 tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
 Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
-toolbar button's tint. (colour
+toolbar button's tint; its **Width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar
+or its button's width in the toolbar (a button too narrow for icon and name shows just the icon). (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
 Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 

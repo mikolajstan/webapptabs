@@ -57,6 +57,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   the default for outlines and toolbar buttons; colour cells use the shared `ColorPicker` (NSColorPanel target,
   yields to the default colour well while it's active). `pinnedButtonLabel` / `quickButtonLabel`
   (`ButtonLabel`: icon and name / icon / name) set what the toolbar pills show (`PinnedSwitcher.update(show:)`).
+  `PinnedPage.width` / `QuickGroup.width` (points): a fixed width in `narrowPinnedTabs` (the pass also runs for
+  it in the full-width styles) and `Pill.fixedWidth` (content centred, name dropped by `fitLabel` if it
+  doesn't fit next to the icon).
   Outline colour is stored as "r g b a" (sRGB) under `pinnedOutlineColor`. Every change saves immediately and calls `App.applyPinnedPages()`
   (pins/unpins/renames/opens tabs, keeps pinned first, restores selection + key window).
 - Launch: `openStartTabs()` = pinned pages, then (if Restore Tabs) saved non-pinned tabs (first saved
