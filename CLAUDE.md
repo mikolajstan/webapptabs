@@ -129,7 +129,7 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
    and skip them (on a quick tab: ⌃Tab → first, ⌃⇧Tab → last; `windowShouldClose` pre-selects the first
    non-quick tab when AppKit would land on a quick one); the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
-   window). Groups: `QuickGroup` {id, name, color} in `quickGroups` (Settings → Quick tab groups,
+   window). Groups: `QuickGroup` {id, name, color, width, icon (nil = the open page's)} in `quickGroups` (Settings → Quick tab groups,
    `GroupsEditor`); a quick page points at one by `PinnedPage.groupId` (Group column = NSPopUpButton,
    `PagesEditor(groups:)`). Earlier drafts stored the group name in `PinnedPage.group` + `quickGroupColors`:
    `migrateQuickGroups()` converts that at launch. `PinnedSwitcher` makes one pill per page or per group (popup `menu(for:)`), and every switcher item

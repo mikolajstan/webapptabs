@@ -3,6 +3,13 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [Unreleased]
+
+### Added
+- **Group icons**: an Icon column in Settings → Quick tab groups (1–2 letters, an emoji or an SF Symbol name,
+  like a tab's). The group's button and its entry in the » overflow menu show it. Empty keeps the open page's
+  icon, as before.
+
 ## [1.3] – 2026-10-21
 
 ### Added

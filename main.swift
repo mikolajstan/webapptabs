@@ -121,6 +121,11 @@ struct QuickGroup: Codable, Equatable {
     var color: String?   // "#RRGGBBAA"; nil = the default colour
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
     var width: Double?   // the button's width in points; nil = automatic
+    // its button's icon (letters, emoji or an SF Symbol name, like a tab's); nil = the open page's icon
+    var icon: String?
+    var iconImage: NSImage? {
+        icon.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : PinnedPage(name: name, url: "", icon: $0).iconImage }
+    }
 }
 
 // Settings → Width cells: points, 24…800; empty = automatic
@@ -1667,7 +1672,7 @@ final class PinnedSwitcher: NSStackView {
             if let group = entry.group {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
-                pill.icon.image = shown.iconImage
+                pill.icon.image = group.iconImage ?? shown.iconImage   // its own icon, else the open page's
                 pill.label.stringValue = group.name
                 pill.label.isHidden = show == .icon
                 pill.icon.isHidden = show == .name
@@ -1726,7 +1731,8 @@ final class PinnedSwitcher: NSStackView {
         for entry in entries {
             if let group = entry.group {
                 let item = NSMenuItem(title: group.name, action: nil, keyEquivalent: "")
-                item.image = pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
+                item.image = group.iconImage
+                    ?? pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
                 item.submenu = self.menu(for: entry.indices)
                 menu.addItem(item)
             } else {
@@ -2008,7 +2014,8 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     override init() {
         super.init()
-        for (id, title, width) in [("name", "Name", 200.0), ("color", "Colour", 140.0), ("width", "Width", 60.0)] {
+        for (id, title, width) in [("icon", "Icon", 70.0), ("name", "Name", 180.0), ("color", "Colour", 130.0),
+                                   ("width", "Width", 60.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
             column.width = width
@@ -2064,7 +2071,7 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         ColorPicker.shared.pick(group.tint ?? App.shared.outlineColor) { [weak self] color in
             guard let self, let row = self.groups.firstIndex(where: { $0.id == group.id }) else { return }
             self.groups[row].color = color.hexString
-            self.table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1])
+            self.table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(0..<self.table.numberOfColumns))
             self.save()
         }
     }
@@ -2084,6 +2091,9 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             case .width(let width): groups[row].width = width
             case .invalid: NSSound.beep()
             }
+        } else if field.identifier?.rawValue == "icon" {
+            let icon = field.stringValue.trimmingCharacters(in: .whitespaces)
+            groups[row].icon = icon.isEmpty ? nil : PinnedPage.isSymbol(icon) ? icon : String(icon.prefix(2))
         } else {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             groups[row].name = name.isEmpty ? groups[row].name : name
@@ -2097,13 +2107,19 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if column?.identifier.rawValue == "color" {
             return colorCell(hex: group.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
-        let isWidth = column?.identifier.rawValue == "width"
-        let field = NSTextField(string: isWidth ? group.width.map { String(Int($0)) } ?? "" : group.name)
-        field.identifier = .init(isWidth ? "width" : "name")
-        if isWidth {
+        let id = column?.identifier.rawValue ?? "name"
+        let field = NSTextField(string: id == "width" ? group.width.map { String(Int($0)) } ?? ""
+                                    : id == "icon" ? group.icon ?? "" : group.name)
+        field.identifier = .init(id)
+        if id == "width" {
             field.placeholderString = "auto"
             field.alignment = .right
             field.toolTip = "Width in points (24–800); empty = automatic"
+        }
+        if id == "icon" {
+            field.placeholderString = "page"
+            field.alignment = .center
+            field.toolTip = "1–2 letters, an emoji or an SF Symbol name (like folder); empty = the open page's icon"
         }
         field.isBordered = false
         field.drawsBackground = false
@@ -2194,9 +2210,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                                  + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
                        pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
             Self.pane([Self.heading("Quick tab groups"),
-                       Self.hint("A group is one toolbar button, \u{201C}Name ▾\u{201D}, that opens a menu of its quick tabs. "
-                                 + "Create it here (name and colour; empty Colour = the default colour), then pick it in the "
-                                 + "Group column of the quick tabs."),
+                       Self.hint("A group is one toolbar button, \u{201C}Name ⌄\u{201D}, that opens a menu of its quick tabs. "
+                                 + "Create it here (an empty Icon shows the open page's icon, an empty Colour the default "
+                                 + "colour), then pick it in the Group column of the quick tabs."),
                        groupEditor.scroll, groupEditor.buttons], grow: groupEditor.scroll),
             Self.pane([Self.heading("Quick tabs"),
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
