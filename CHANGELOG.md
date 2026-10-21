@@ -25,9 +25,9 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   and all of them grow with the window (before, only the pinned list did).
 
 ### Fixed
-- A single pinned tab was invisible in every style but the separate row: the tab bar was hidden because only
-  one tab showed in it (quick tabs are hidden there), or because a window with one tab has no tab bar. A
-  pinned tab now always keeps the tab bar on; only a single ordinary tab hides it, as in macOS.
+- The tab bar is hidden only when it would show nothing, or when the window is a single ordinary tab (as in
+  macOS). Before, a single pinned tab (next to quick tabs, or alone in its window) or a single opened tab next
+  to pinned / quick tabs could end up invisible.
 - When the window is too narrow and the toolbar moves the quick tabs (or the separate-row pinned tabs) into
   its » menu, that menu entry now lists the pages (groups as submenus). Before, it did nothing.
 

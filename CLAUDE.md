@@ -105,8 +105,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    past the background. `Tab.updateToolbar` / `refreshPinnedSwitcher`; toolbars share the "main"
    identifier, so inserting in one adds to all).
    The tab bar is hidden while only pinned tabs are open by hiding the NSTitlebarAccessoryViewController
-   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs. Rule: hidden when
-   the bar would show nothing, or one ordinary tab; a visible pinned tab always keeps it on. A one-tab window
+   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs. Rule: hidden only
+   when the bar would show nothing, or the window is a single ordinary tab (macOS's own behaviour); next to
+   pinned / quick tabs even one opened tab shows, and a lone pinned tab keeps it on. A one-tab window
    has no accessory: there `toggleTabBar` (View → Show Tab Bar) is used to show a lone pinned tab. Hide it in
    **every** tab window: each has the accessory, but the NSTabBar view inside moves to the selected one.
    Hiding only the window that holds the bar made every tab switch resize the page by 36 px, which left

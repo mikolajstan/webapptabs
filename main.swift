@@ -1200,8 +1200,9 @@ final class App: NSObject, NSApplicationDelegate {
             let pages = group.windows.map { w in tabs.first { $0.window === w }?.pinned }
             let pinnedShown = pages.filter { $0 != nil && $0?.isQuick == false && pinnedStyle != .separateRow }.count
             let shown = pinnedShown + pages.filter { $0 == nil }.count
-            // like macOS, no bar for a single ordinary tab – but a pinned tab is always shown
-            let hide = shown == 0 || (shown == 1 && pinnedShown == 0)
+            // hidden only when it would show nothing, or (like macOS) when the window is a single ordinary tab;
+            // next to pinned / quick tabs, even one opened tab shows
+            let hide = shown == 0 || group.windows.count == 1 && pinnedShown == 0
             for accessory in window.titlebarAccessoryViewControllers where accessory.isHidden != hide {
                 accessory.isHidden = hide
             }
