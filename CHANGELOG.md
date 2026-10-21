@@ -3,7 +3,7 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## [Unreleased]
+## [1.4] – 2026-10-21
 
 ### Added
 - **Group icons**: an Icon column in Settings → Quick tab groups, like a tab's icon. The group's button and its
@@ -126,6 +126,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.4]: https://github.com/mikolajstan/webapptabs/releases/tag/1.4
 [1.3]: https://github.com/mikolajstan/webapptabs/releases/tag/1.3
 [1.2.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.2.1
 [1.2]: https://github.com/mikolajstan/webapptabs/releases/tag/1.2
