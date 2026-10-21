@@ -150,7 +150,11 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    button → icon at x=24 in a 36 px tab. Fix: `detachesHiddenViews = true` + left inset (36−16)/2; originals
    restored when unpinned (`centerPinnedIcon`).
 4. **Icons**: always a 16×16 image; symbols (template, tinted by tab bar) and text (CoreText ink bounds)
-   are centred on their visible shape – SF Symbol images otherwise sit high, emoji low.
+   are centred on their visible shape – SF Symbol images otherwise sit high, emoji low. Symbols and images
+   are scaled to fit (`PinnedPage.fit`; wide ones like person.3 were clipped). An icon that's a file path or a
+   web address is an image (`IconImages`: files load directly, web images download in the background into
+   ~/Library/Caches/<bundle id>/icons, then tabs/buttons are redrawn; first letter meanwhile).
+   `PinnedPage.normalizedIcon` keeps symbol names and image references whole, cuts other text to 2 chars.
 5. **Mute**: `_setPageMuted:` via method IMP (+ JS shim blocking `play()` / AudioContext).
 6. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
    Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
