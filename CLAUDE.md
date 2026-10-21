@@ -55,7 +55,8 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   and `PagesEditor` (quick, Group menu column); minimum pane height 175. Per-page `PinnedPage.color` / group
   `QuickGroup.color` (hex) override
   the default for outlines and toolbar buttons; colour cells use the shared `ColorPicker` (NSColorPanel target,
-  yields to the default colour well while it's active).
+  yields to the default colour well while it's active). `pinnedButtonLabel` / `quickButtonLabel`
+  (`ButtonLabel`: icon and name / icon / name) set what the toolbar pills show (`PinnedSwitcher.update(show:)`).
   Outline colour is stored as "r g b a" (sRGB) under `pinnedOutlineColor`. Every change saves immediately and calls `App.applyPinnedPages()`
   (pins/unpins/renames/opens tabs, keeps pinned first, restores selection + key window).
 - Launch: `openStartTabs()` = pinned pages, then (if Restore Tabs) saved non-pinned tabs (first saved

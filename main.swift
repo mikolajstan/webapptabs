@@ -80,6 +80,8 @@ enum Setting {
     static let pinnedPages = "pinnedPages"
     static let quickPages = "quickPages"
     static let quickGroups = "quickGroups"        // [QuickGroup] as JSON
+    static let pinnedButtons = "pinnedButtonLabel"   // ButtonLabel of the separate row's buttons
+    static let quickButtons = "quickButtonLabel"     // ButtonLabel of the quick tab buttons
     static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
     static let pinnedStyle = "pinnedTabStyle"
@@ -96,6 +98,18 @@ enum PinnedStyle: String, CaseIterable {
         case .iconAndNameCompact: "Icon and name, compact"
         case .iconAndName: "Icon and name, full width"
         case .name: "Name only, full width"
+        }
+    }
+}
+
+// What the toolbar buttons of pinned tabs (separate row) and quick tabs show
+enum ButtonLabel: String, CaseIterable {
+    case iconAndName, icon, name
+    var title: String {
+        switch self {
+        case .iconAndName: "Icon and name"
+        case .icon: "Icon only"
+        case .name: "Name only"
         }
     }
 }
@@ -576,9 +590,10 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func refreshPinnedSwitcher() {
         let selected = App.shared.selectedTab?.pinned?.id, color = App.shared.outlineColor
         let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
-        pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color)
+        pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color,
+                              show: App.shared.pinnedButtonLabel)
         quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color,
-                             groups: App.shared.quickGroups)
+                             groups: App.shared.quickGroups, show: App.shared.quickButtonLabel)
         // when the window is too narrow the toolbar moves them into its » menu, which uses these
         for item in window?.toolbar?.items ?? [] {
             guard let switcher = item.view as? PinnedSwitcher else { continue }
@@ -1085,6 +1100,16 @@ final class App: NSObject, NSApplicationDelegate {
         get { Self.pages(Setting.quickPages, quick: true) }
         set { Self.store(newValue, Setting.quickPages, quick: true); applyPinnedPages() }
     }
+    // Settings: what the separate row's pinned buttons and the quick tab buttons show
+    var pinnedButtonLabel: ButtonLabel {
+        get { UserDefaults.standard.string(forKey: Setting.pinnedButtons).flatMap(ButtonLabel.init) ?? .iconAndName }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Setting.pinnedButtons); tabs.forEach { $0.refreshPinnedSwitcher() } }
+    }
+    var quickButtonLabel: ButtonLabel {
+        get { UserDefaults.standard.string(forKey: Setting.quickButtons).flatMap(ButtonLabel.init) ?? .iconAndName }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Setting.quickButtons); tabs.forEach { $0.refreshPinnedSwitcher() } }
+    }
+
     // Settings → Quick tab groups; quick pages point at one by id
     var quickGroups: [QuickGroup] {
         get {
@@ -1560,7 +1585,8 @@ final class PinnedSwitcher: NSStackView {
     }
 
     // color: the default; a page's own colour, or its group's, wins
-    func update(pages: [PinnedPage], selected: Int?, color: NSColor, groups: [QuickGroup] = []) {
+    func update(pages: [PinnedPage], selected: Int?, color: NSColor, groups: [QuickGroup] = [],
+                show: ButtonLabel = .iconAndName) {
         self.pages = pages
         self.selected = selected
         self.groups = groups
@@ -1581,8 +1607,11 @@ final class PinnedSwitcher: NSStackView {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
                 pill.icon.image = shown.iconImage
-                pill.label.stringValue = group.name + " ▾"
-                pill.toolTip = entry.indices.map { pages[$0].name }.joined(separator: ", ")
+                pill.label.stringValue = show == .icon ? "▾" : group.name + " ▾"
+                pill.label.isHidden = false
+                pill.icon.isHidden = show == .name
+                let names = entry.indices.map { pages[$0].name }.joined(separator: ", ")
+                pill.toolTip = show == .icon ? "\(group.name): \(names)" : names
                 pill.setAccessibilityLabel(group.name)
                 pill.onPress = { [weak self, weak pill] in
                     guard let self, let pill else { return }
@@ -1592,7 +1621,9 @@ final class PinnedSwitcher: NSStackView {
                 let index = entry.indices[0], page = pages[index]
                 pill.icon.image = page.iconImage
                 pill.label.stringValue = page.name
-                pill.toolTip = page.url
+                pill.icon.isHidden = show == .name
+                pill.label.isHidden = show == .icon
+                pill.toolTip = show == .icon ? "\(page.name) – \(page.url)" : page.url
                 pill.setAccessibilityLabel(page.name)
                 pill.onPress = { [weak self] in self?.onSelect?(index) }
             }
@@ -1999,6 +2030,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     private let colorWell = NSColorWell(style: .default)
     private let hexField = NSTextField()
     private let stylePopup = NSPopUpButton()
+    private let pinnedButtonsPopup = NSPopUpButton()
+    private let quickButtonsPopup = NSPopUpButton()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
@@ -2040,8 +2073,15 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         stylePopup.addItems(withTitles: PinnedStyle.allCases.map(\.title))
         stylePopup.target = self
         stylePopup.action = #selector(styleChanged)
-        let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup])
+        for popup in [pinnedButtonsPopup, quickButtonsPopup] {
+            popup.addItems(withTitles: ButtonLabel.allCases.map(\.title))
+            popup.target = self
+            popup.action = #selector(buttonLabelChanged(_:))
+        }
+        let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup,
+                                           NSTextField(labelWithString: "  buttons:"), pinnedButtonsPopup])
         styleRow.spacing = 8
+        pinnedButtonsPopup.toolTip = "What the separate row's buttons show"
         ColorPicker.shared.willPick = { [weak self] in self?.colorWell.deactivate() }
         ColorPicker.shared.isBlocked = { [weak self] in self?.colorWell.isActive ?? false }
         groupEditor.onSave = { [weak self] in self?.quickEditor.reload() }   // the Group menus list the groups
@@ -2069,7 +2109,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
                                  + "tabs they stay open and locked (⌘W takes one back to its page), but they're not in the "
                                  + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
-                       quickEditor.scroll, quickEditor.buttons], grow: quickEditor.scroll),
+                       quickEditor.scroll, Self.row([quickEditor.buttons, NSView(),
+                                                     NSTextField(labelWithString: "Buttons show:"), quickButtonsPopup])],
+                      grow: quickEditor.scroll),
         ] {
             pane.translatesAutoresizingMaskIntoConstraints = true
             pane.autoresizingMask = [.width, .height]
@@ -2145,7 +2187,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         pane.alignment = .leading
         pane.spacing = 6
         pane.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
-        for view in views where view is NSScrollView || (view as? NSTextField)?.cell?.wraps == true {
+        for view in views where view is NSScrollView || view is NSStackView || (view as? NSTextField)?.cell?.wraps == true {
             view.widthAnchor.constraint(equalTo: pane.widthAnchor).isActive = true
         }
         let minimum = grow.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
@@ -2167,13 +2209,29 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         return label
     }
 
-    @objc private func styleChanged() { App.shared.pinnedStyle = PinnedStyle.allCases[stylePopup.indexOfSelectedItem] }
+    @objc private func styleChanged() {
+        App.shared.pinnedStyle = PinnedStyle.allCases[stylePopup.indexOfSelectedItem]
+        pinnedButtonsPopup.isEnabled = App.shared.pinnedStyle == .separateRow   // only the separate row has buttons
+    }
+    @objc private func buttonLabelChanged(_ popup: NSPopUpButton) {
+        let label = ButtonLabel.allCases[popup.indexOfSelectedItem]
+        if popup === pinnedButtonsPopup { App.shared.pinnedButtonLabel = label } else { App.shared.quickButtonLabel = label }
+    }
+    private static func row(_ views: [NSView]) -> NSStackView {
+        let row = NSStackView(views: views)
+        row.spacing = 8
+        views.first { type(of: $0) == NSView.self }?.setContentHuggingPriority(.init(1), for: .horizontal)   // spacer
+        return row
+    }
 
     func show() {
         pinnedEditor.reload()
         quickEditor.reload()
         groupEditor.reload()
         stylePopup.selectItem(at: PinnedStyle.allCases.firstIndex(of: App.shared.pinnedStyle) ?? 0)
+        pinnedButtonsPopup.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.pinnedButtonLabel) ?? 0)
+        quickButtonsPopup.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.quickButtonLabel) ?? 0)
+        pinnedButtonsPopup.isEnabled = App.shared.pinnedStyle == .separateRow
         colorWell.color = App.shared.outlineColor
         hexField.stringValue = App.shared.outlineColor.hexString
         homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""

@@ -16,6 +16,10 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   or group's colour (swatch → colour picker, or hex) is its outline in the tab bar and its
   toolbar button's tint; empty uses the default colour (the former "Outline colour").
 
+- **Button labels**: what the separate row's pinned buttons and the quick tab buttons show – icon and name,
+  icon only or name only – set separately (Settings → next to "Pinned tabs show", and "Buttons show" under
+  the quick tabs). Hidden names show on hover.
+
 ### Changed
 - Settings: the pinned tabs, quick tab groups and quick tabs lists sit in a split view with draggable dividers,
   and all of them grow with the window (before, only the pinned list did).
