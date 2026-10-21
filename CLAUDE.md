@@ -13,6 +13,7 @@ the code: how it fits together, decisions already made, and traps already hit.
 | `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to Safari |
 | `tools/test.sh`, `tools/harness.py` | scripted tests in a throwaway app (see Testing) |
 | `tools/crop.swift` | crop + enlarge a screenshot region (tab bar inspection) |
+| `CHANGELOG.md` | changes per version (= git tag / GitHub release); add an entry with every release |
 
 Build: `./make-app.sh --all` after any main.swift change (restarts running apps; tabs are restored from the
 saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays running).

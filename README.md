@@ -93,4 +93,5 @@ Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 - Pinned tabs, the outline and icon centring use internal macOS tab-bar views. If a macOS update changes
   them, pinned tabs fall back to normal-width tabs / no outline – nothing else breaks.
 
-Developer notes (architecture, workarounds, testing): see [CLAUDE.md](CLAUDE.md).
+Changes per version: [CHANGELOG.md](CHANGELOG.md). Developer notes (architecture, workarounds, testing):
+see [CLAUDE.md](CLAUDE.md).
