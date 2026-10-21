@@ -110,6 +110,9 @@ struct PinnedPage: Codable, Equatable {
     // button at the right end of the toolbar – hidden in the tab bar, skipped by ⌃Tab and ⌘1…⌘9
     var quick: Bool?
     var isQuick: Bool { quick == true }
+    // Quick tabs with the same group name share one toolbar button that opens a menu of them
+    var group: String?
+    var groupName: String? { group.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } }
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -562,6 +565,13 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
         let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
         pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color)
         quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color)
+        // when the window is too narrow the toolbar moves them into its » menu, which uses these
+        for item in window?.toolbar?.items ?? [] {
+            guard let switcher = item.view as? PinnedSwitcher else { continue }
+            let menuItem = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
+            menuItem.submenu = switcher.overflowMenu()
+            item.menuFormRepresentation = menuItem
+        }
     }
     private func selectPinnedPage(_ page: PinnedPage?) {
         guard let page, let tab = App.shared.tabs.first(where: { $0.pinned?.id == page.id }) else { return }
@@ -1478,24 +1488,56 @@ final class PinnedSwitcher: NSStackView {
         override func accessibilityPerformPress() -> Bool { onPress?(); return true }
     }
 
+    private var pages: [PinnedPage] = []
+    private var selected: Int?
+    // one entry per page, or per group: pages sharing a group name, at the place of the first of them
+    private var entries: [(group: String?, indices: [Int])] {
+        var entries: [(group: String?, indices: [Int])] = []
+        for (index, page) in pages.enumerated() {
+            if let group = page.groupName, let at = entries.firstIndex(where: { $0.group == group }) {
+                entries[at].indices.append(index)
+            } else {
+                entries.append((page.groupName, [index]))
+            }
+        }
+        return entries
+    }
+
     func update(pages: [PinnedPage], selected: Int?, color: NSColor) {
+        self.pages = pages
+        self.selected = selected
         spacing = 6
         // the toolbar's glass capsule ends exactly at the item's edge – keep the pills inside its rounded
         // end (26 px pills in a 36 px capsule → 5 px all round)
         edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 5)
-        while arrangedSubviews.count > pages.count { arrangedSubviews.last?.removeFromSuperview() }
-        while arrangedSubviews.count < pages.count { addArrangedSubview(Pill()) }
+        let entries = entries
+        while arrangedSubviews.count > entries.count { arrangedSubviews.last?.removeFromSuperview() }
+        while arrangedSubviews.count < entries.count { addArrangedSubview(Pill()) }
         let rgb = color.usingColorSpace(.sRGB) ?? color
         let alpha = rgb.alphaComponent
-        for (index, view) in arrangedSubviews.enumerated() {
+        for (view, entry) in zip(arrangedSubviews, entries) {
             guard let pill = view as? Pill else { continue }
-            let page = pages[index], isSelected = index == selected
-            pill.onPress = { [weak self] in self?.onSelect?(index) }
-            pill.icon.image = page.iconImage
-            pill.label.stringValue = page.name
+            let isSelected = selected.map(entry.indices.contains) ?? false
+            if let group = entry.group {
+                // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
+                let shown = pages[isSelected ? selected! : entry.indices[0]]
+                pill.icon.image = shown.iconImage
+                pill.label.stringValue = group + " ▾"
+                pill.toolTip = entry.indices.map { pages[$0].name }.joined(separator: ", ")
+                pill.setAccessibilityLabel(group)
+                pill.onPress = { [weak self, weak pill] in
+                    guard let self, let pill else { return }
+                    self.menu(for: entry.indices).popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: pill)
+                }
+            } else {
+                let index = entry.indices[0], page = pages[index]
+                pill.icon.image = page.iconImage
+                pill.label.stringValue = page.name
+                pill.toolTip = page.url
+                pill.setAccessibilityLabel(page.name)
+                pill.onPress = { [weak self] in self?.onSelect?(index) }
+            }
             pill.label.textColor = isSelected ? .labelColor : .secondaryLabelColor
-            pill.toolTip = page.url
-            pill.setAccessibilityLabel(page.name)
             pill.setAccessibilityValue(isSelected ? "selected" : nil)
             // with no colour (opacity 0) the selected one still gets a neutral background
             let background = alpha < 0.05 ? (isSelected ? NSColor.quaternaryLabelColor : .clear)
@@ -1506,6 +1548,36 @@ final class PinnedSwitcher: NSStackView {
             }
         }
     }
+
+    // the pages at `indices` (a group's dropdown), the open one ticked
+    func menu(for indices: [Int]) -> NSMenu {
+        let menu = NSMenu()
+        for index in indices {
+            let item = NSMenuItem(title: pages[index].name, action: #selector(picked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.image = pages[index].iconImage
+            item.state = index == selected ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+    // Everything, for the toolbar's » overflow menu when the window is too narrow: groups as submenus
+    func overflowMenu() -> NSMenu {
+        let menu = NSMenu()
+        for entry in entries {
+            if let group = entry.group {
+                let item = NSMenuItem(title: group, action: nil, keyEquivalent: "")
+                item.image = pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
+                item.submenu = self.menu(for: entry.indices)
+                menu.addItem(item)
+            } else {
+                self.menu(for: entry.indices).items.forEach { $0.menu?.removeItem($0); menu.addItem($0) }
+            }
+        }
+        return menu
+    }
+    @objc private func picked(_ item: NSMenuItem) { onSelect?(item.tag) }
 }
 
 // A list of pages (Icon | Name | Address) with + / − and drag to reorder; every change is saved right away.
@@ -1520,12 +1592,15 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     private let store: ([PinnedPage]) -> Void
     private var pages: [PinnedPage] = []
 
-    init(id: String, load: @escaping () -> [PinnedPage], store: @escaping ([PinnedPage]) -> Void) {
+    init(id: String, groups: Bool = false, load: @escaping () -> [PinnedPage], store: @escaping ([PinnedPage]) -> Void) {
         self.load = load
         self.store = store
         rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
         super.init()
-        for (id, title, width) in [("icon", "Icon", 80.0), ("name", "Name", 120.0), ("url", "Address", 350.0)] {
+        let columns = groups
+            ? [("icon", "Icon", 70.0), ("name", "Name", 110.0), ("group", "Group", 90.0), ("url", "Address", 300.0)]
+            : [("icon", "Icon", 80.0), ("name", "Name", 120.0), ("url", "Address", 350.0)]
+        for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
             column.width = width
@@ -1587,12 +1662,15 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         } else if field.identifier?.rawValue == "name" {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             pages[row].name = name.isEmpty ? pages[row].name : name
+        } else if field.identifier?.rawValue == "group" {
+            pages[row].group = field.stringValue
+            pages[row].group = pages[row].groupName   // trimmed, nil when empty
         } else if let url = webURL(from: field.stringValue) {
             pages[row].url = url.absoluteString
         } else {
             NSSound.beep()
         }
-        table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1, 2])
+        table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(0..<table.numberOfColumns))
         save()
     }
 
@@ -1602,8 +1680,10 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         let id = column?.identifier.rawValue ?? "name"
         let page = pages[row]
-        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name : page.url)
+        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name
+                                    : id == "group" ? page.groupName ?? "" : page.url)
         if id == "icon" { field.alignment = .center }
+        if id == "group" { field.placeholderString = "–" }
         field.identifier = .init(id)
         field.isBordered = false
         field.drawsBackground = false
@@ -1640,7 +1720,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     static let shared = SettingsWindow()
     private let homeField = NSTextField()
     private let pinnedEditor = PagesEditor(id: "pinned", load: { App.shared.pinnedPages }, store: { App.shared.pinnedPages = $0 })
-    private let quickEditor = PagesEditor(id: "quick", load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
+    private let quickEditor = PagesEditor(id: "quick", groups: true, load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
     private let colorWell = NSColorWell(style: .default)
     private let hexField = NSTextField()
     private let stylePopup = NSPopUpButton()
@@ -1698,7 +1778,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
             Self.heading("Quick tabs"),
             Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned tabs "
                       + "they stay open and locked (⌘W takes one back to its page), but they're not in the tab bar "
-                      + "and ⌃Tab / ⌘1, ⌘2… skip them."),
+                      + "and ⌃Tab / ⌘1, ⌘2… skip them. Pages with the same Group share one button with a menu."),
             quickEditor.scroll, quickEditor.buttons,
         ])
         stack.orientation = .vertical

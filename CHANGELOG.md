@@ -3,6 +3,17 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [Unreleased]
+
+### Added
+- **Quick tab groups**: a Group column in Settings → Quick tabs. Quick pages with the same group share one
+  toolbar button, `Group ▾`, that opens a menu of them. The button shows the open page's icon and is
+  highlighted while one of its pages is open, and the menu ticks the open page.
+
+### Fixed
+- When the window is too narrow and the toolbar moves the quick tabs (or the separate-row pinned tabs) into
+  its » menu, that menu entry now lists the pages (groups as submenus). Before, it did nothing.
+
 ## [1.2.1] – 2026-10-21
 
 ### Changed

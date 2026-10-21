@@ -115,7 +115,10 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
    and skip them (on a quick tab: ⌃Tab → first, ⌃⇧Tab → last; `windowShouldClose` pre-selects the first
    non-quick tab when AppKit would land on a quick one); the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
-   window). Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
+   window). Groups: `PinnedPage.group` (Settings column only on the quick list, `PagesEditor(groups:)`);
+   `PinnedSwitcher` makes one pill per page or per group (popup `menu(for:)`), and every switcher item
+   gets a `menuFormRepresentation` (`overflowMenu()`) – without it, items moved into the toolbar's » overflow
+   menu did nothing. Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
    item inserts across windows and throws on a duplicate. Settings lists are `PagesEditor` instances.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
