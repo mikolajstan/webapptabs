@@ -79,7 +79,8 @@ enum Setting {
     static let homeURL = "homeURL"   // also read by Link Router
     static let pinnedPages = "pinnedPages"
     static let quickPages = "quickPages"
-    static let groupColors = "quickGroupColors"   // group name → "#RRGGBBAA"
+    static let quickGroups = "quickGroups"        // [QuickGroup] as JSON
+    static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
@@ -99,6 +100,14 @@ enum PinnedStyle: String, CaseIterable {
     }
 }
 
+// A group of quick tabs: one toolbar button ("Name ▾") that opens a menu of its pages
+struct QuickGroup: Codable, Equatable {
+    var id = UUID().uuidString
+    var name: String
+    var color: String?   // "#RRGGBBAA"; nil = the default colour
+    var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
+}
+
 // A page that always opens first, as a pinned tab (Settings → Pinned tabs)
 struct PinnedPage: Codable, Equatable {
     var id = UUID().uuidString
@@ -111,9 +120,9 @@ struct PinnedPage: Codable, Equatable {
     // button at the right end of the toolbar – hidden in the tab bar, skipped by ⌃Tab and ⌘1…⌘9
     var quick: Bool?
     var isQuick: Bool { quick == true }
-    // Quick tabs with the same group name share one toolbar button that opens a menu of them
-    var group: String?
-    var groupName: String? { group.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } }
+    // The quick tab group (Settings → Quick tab groups) whose toolbar button lists this page
+    var groupId: String?
+    var group: String?   // earlier drafts stored the group's name here; migrated to groupId at launch
     // Its own outline / button colour ("#RRGGBBAA"); nil = Settings → Default colour
     var color: String?
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
@@ -567,10 +576,9 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func refreshPinnedSwitcher() {
         let selected = App.shared.selectedTab?.pinned?.id, color = App.shared.outlineColor
         let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
-        let groupColors = App.shared.groupColors.compactMapValues(NSColor.init(hex:))
         pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color)
         quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color,
-                             groupColors: groupColors)
+                             groups: App.shared.quickGroups)
         // when the window is too narrow the toolbar moves them into its » menu, which uses these
         for item in window?.toolbar?.items ?? [] {
             guard let switcher = item.view as? PinnedSwitcher else { continue }
@@ -992,6 +1000,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        migrateQuickGroups()
         NSApp.mainMenu = buildMenu()
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let (key, mods, chars) = (event.keyCode, event.modifierFlags, event.charactersIgnoringModifiers)
@@ -1076,13 +1085,38 @@ final class App: NSObject, NSApplicationDelegate {
         get { Self.pages(Setting.quickPages, quick: true) }
         set { Self.store(newValue, Setting.quickPages, quick: true); applyPinnedPages() }
     }
-    // Colours of the quick tab group buttons (group name → hex); a group without one uses the default colour
-    var groupColors: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: Setting.groupColors) as? [String: String] ?? [:] }
+    // Settings → Quick tab groups; quick pages point at one by id
+    var quickGroups: [QuickGroup] {
+        get {
+            UserDefaults.standard.data(forKey: Setting.quickGroups)
+                .flatMap { try? JSONDecoder().decode([QuickGroup].self, from: $0) } ?? []
+        }
         set {
-            UserDefaults.standard.set(newValue, forKey: Setting.groupColors)
+            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Setting.quickGroups)
             tabs.forEach { $0.refreshPinnedSwitcher() }
         }
+    }
+    // Earlier drafts kept a group as a name on each quick page (+ a name → colour map): make real groups
+    func migrateQuickGroups() {
+        var pages = quickPages
+        guard pages.contains(where: { $0.group != nil }) else { return }
+        var groups = quickGroups
+        let colors = UserDefaults.standard.dictionary(forKey: Setting.legacyGroupColors) as? [String: String] ?? [:]
+        for index in pages.indices {
+            defer { pages[index].group = nil }
+            guard pages[index].groupId == nil,
+                  let name = pages[index].group?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { continue }
+            if let group = groups.first(where: { $0.name == name }) {
+                pages[index].groupId = group.id
+            } else {
+                let group = QuickGroup(name: name, color: colors[name])
+                groups.append(group)
+                pages[index].groupId = group.id
+            }
+        }
+        UserDefaults.standard.set(try? JSONEncoder().encode(groups), forKey: Setting.quickGroups)
+        Self.store(pages, Setting.quickPages, quick: true)
+        UserDefaults.standard.removeObject(forKey: Setting.legacyGroupColors)
     }
     // the order the tabs keep: pinned first, then the quick tabs
     var allPinnedPages: [PinnedPage] { pinnedPages + quickPages }
@@ -1505,23 +1539,26 @@ final class PinnedSwitcher: NSStackView {
 
     private var pages: [PinnedPage] = []
     private var selected: Int?
-    // one entry per page, or per group: pages sharing a group name, at the place of the first of them
-    private var entries: [(group: String?, indices: [Int])] {
-        var entries: [(group: String?, indices: [Int])] = []
+    private var groups: [QuickGroup] = []
+    // one entry per page, or per group: its pages, at the place of the first of them
+    private var entries: [(group: QuickGroup?, indices: [Int])] {
+        var entries: [(group: QuickGroup?, indices: [Int])] = []
         for (index, page) in pages.enumerated() {
-            if let group = page.groupName, let at = entries.firstIndex(where: { $0.group == group }) {
+            let group = page.groupId.flatMap { id in groups.first { $0.id == id } }
+            if let group, let at = entries.firstIndex(where: { $0.group?.id == group.id }) {
                 entries[at].indices.append(index)
             } else {
-                entries.append((page.groupName, [index]))
+                entries.append((group, [index]))
             }
         }
         return entries
     }
 
     // color: the default; a page's own colour, or its group's, wins
-    func update(pages: [PinnedPage], selected: Int?, color: NSColor, groupColors: [String: NSColor] = [:]) {
+    func update(pages: [PinnedPage], selected: Int?, color: NSColor, groups: [QuickGroup] = []) {
         self.pages = pages
         self.selected = selected
+        self.groups = groups
         spacing = 6
         // the toolbar's glass capsule ends exactly at the item's edge – keep the pills inside its rounded
         // end (26 px pills in a 36 px capsule → 5 px all round)
@@ -1532,16 +1569,16 @@ final class PinnedSwitcher: NSStackView {
         for (view, entry) in zip(arrangedSubviews, entries) {
             guard let pill = view as? Pill else { continue }
             let isSelected = selected.map(entry.indices.contains) ?? false
-            let own = entry.group.map { groupColors[$0] } ?? pages[entry.indices[0]].tint
+            let own = entry.group.map(\.tint) ?? pages[entry.indices[0]].tint
             let rgb = (own ?? color).usingColorSpace(.sRGB) ?? color
             let alpha = rgb.alphaComponent
             if let group = entry.group {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
                 pill.icon.image = shown.iconImage
-                pill.label.stringValue = group + " ▾"
+                pill.label.stringValue = group.name + " ▾"
                 pill.toolTip = entry.indices.map { pages[$0].name }.joined(separator: ", ")
-                pill.setAccessibilityLabel(group)
+                pill.setAccessibilityLabel(group.name)
                 pill.onPress = { [weak self, weak pill] in
                     guard let self, let pill else { return }
                     self.menu(for: entry.indices).popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: pill)
@@ -1584,7 +1621,7 @@ final class PinnedSwitcher: NSStackView {
         let menu = NSMenu()
         for entry in entries {
             if let group = entry.group {
-                let item = NSMenuItem(title: group, action: nil, keyEquivalent: "")
+                let item = NSMenuItem(title: group.name, action: nil, keyEquivalent: "")
                 item.image = pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
                 item.submenu = self.menu(for: entry.indices)
                 menu.addItem(item)
@@ -1676,14 +1713,18 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     private let store: ([PinnedPage]) -> Void
     private var pages: [PinnedPage] = []
 
-    init(id: String, groups: Bool = false, load: @escaping () -> [PinnedPage], store: @escaping ([PinnedPage]) -> Void) {
+    // groups: the quick tab groups for the Group column (none: no column)
+    private let groups: (() -> [QuickGroup])?
+    init(id: String, groups: (() -> [QuickGroup])? = nil, load: @escaping () -> [PinnedPage],
+         store: @escaping ([PinnedPage]) -> Void) {
         self.load = load
         self.store = store
+        self.groups = groups
         rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
         super.init()
-        let columns = groups
-            ? [("icon", "Icon", 64.0), ("name", "Name", 100.0), ("group", "Group", 80.0), ("color", "Colour", 110.0),
-               ("url", "Address", 240.0)]
+        let columns = groups != nil
+            ? [("icon", "Icon", 64.0), ("name", "Name", 100.0), ("group", "Group", 110.0), ("color", "Colour", 110.0),
+               ("url", "Address", 220.0)]
             : [("icon", "Icon", 64.0), ("name", "Name", 110.0), ("color", "Colour", 110.0), ("url", "Address", 300.0)]
         for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
@@ -1750,6 +1791,12 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         save()
     }
 
+    @objc private func groupChosen(_ popup: NSPopUpButton) {
+        guard pages.indices.contains(popup.tag) else { return }
+        pages[popup.tag].groupId = popup.selectedItem?.representedObject as? String
+        save()
+    }
+
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
         let row = table.row(for: field)
@@ -1760,9 +1807,6 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         } else if field.identifier?.rawValue == "name" {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             pages[row].name = name.isEmpty ? pages[row].name : name
-        } else if field.identifier?.rawValue == "group" {
-            pages[row].group = field.stringValue
-            pages[row].group = pages[row].groupName   // trimmed, nil when empty
         } else if field.identifier?.rawValue == "color" {
             switch parseColor(field.stringValue) {
             case .clear: pages[row].color = nil
@@ -1787,10 +1831,24 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         if id == "color" {
             return colorCell(hex: page.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
-        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name
-                                    : id == "group" ? page.groupName ?? "" : page.url)
+        if id == "group", let groups = groups?() {
+            // "–" or one of the groups made in Settings → Quick tab groups
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            popup.controlSize = .small
+            popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            popup.addItem(withTitle: "–")
+            for group in groups {
+                popup.addItem(withTitle: group.name)
+                popup.lastItem?.representedObject = group.id
+            }
+            popup.selectItem(at: groups.firstIndex { $0.id == page.groupId }.map { $0 + 1 } ?? 0)
+            popup.tag = row
+            popup.target = self
+            popup.action = #selector(groupChosen(_:))
+            return popup
+        }
+        let field = NSTextField(string: id == "icon" ? page.shownIcon : id == "name" ? page.name : page.url)
         if id == "icon" { field.alignment = .center }
-        if id == "group" { field.placeholderString = "–" }
         field.identifier = .init(id)
         field.isBordered = false
         field.drawsBackground = false
@@ -1822,16 +1880,18 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     }
 }
 
-// Colours of the quick tab groups: one row per group name used in the quick tabs list
+// Settings → Quick tab groups: Name | Colour, + / −. Quick tabs pick their group in the Quick tabs list.
 @MainActor
-final class GroupColorsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     let table = NSTableView()
     let scroll = NSScrollView()
-    private var groups: [String] = []
+    let buttons = NSStackView()
+    var onSave: (() -> Void)?   // the quick tabs' Group menus list the groups
+    private var groups: [QuickGroup] = []
 
     override init() {
         super.init()
-        for (id, title, width) in [("group", "Group", 160.0), ("color", "Colour", 140.0)] {
+        for (id, title, width) in [("name", "Name", 200.0), ("color", "Colour", 140.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
             column.width = width
@@ -1844,40 +1904,82 @@ final class GroupColorsEditor: NSObject, NSTableViewDataSource, NSTableViewDeleg
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
+        let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "Add")!,
+                           target: self, action: #selector(addGroup))
+        let remove = NSButton(image: NSImage(systemSymbolName: "minus", accessibilityDescription: "Remove")!,
+                              target: self, action: #selector(removeGroup))
+        add.toolTip = "Add a group"
+        remove.toolTip = "Remove the selected group (its quick tabs become separate buttons)"
+        let hint = NSTextField(labelWithString: "Then choose the group for quick tabs in the Group column below.")
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        [add, remove, hint].forEach(buttons.addArrangedSubview)
+        buttons.spacing = 6
     }
     var isEditing: Bool { table.editedRow >= 0 }
     func reload() {
-        var seen = Set<String>()
-        groups = App.shared.quickPages.compactMap(\.groupName).filter { seen.insert($0).inserted }
+        groups = App.shared.quickGroups
         table.reloadData()
     }
-    private func setColor(_ hex: String?, for group: String) {
-        var colors = App.shared.groupColors
-        colors[group] = hex
-        App.shared.groupColors = colors
-        if let row = groups.firstIndex(of: group) { table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1]) }
+    private func save() {
+        App.shared.quickGroups = groups
+        onSave?()
+    }
+
+    @objc private func addGroup() {
+        groups.append(QuickGroup(name: "Group \(groups.count + 1)"))
+        table.reloadData()
+        save()
+        let row = groups.count - 1
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        table.editColumn(0, row: row, with: nil, select: true)
+    }
+    @objc private func removeGroup() {
+        guard groups.indices.contains(table.selectedRow) else { return NSSound.beep() }
+        let removed = groups.remove(at: table.selectedRow)
+        // its quick tabs go back to separate buttons
+        App.shared.quickPages = App.shared.quickPages.map { var page = $0; if page.groupId == removed.id { page.groupId = nil }; return page }
+        table.reloadData()
+        save()
     }
     @objc private func pickColor(_ swatch: NSButton) {
         guard let group = groups[safe: swatch.tag] else { return }
-        let current = App.shared.groupColors[group].flatMap(NSColor.init(hex:)) ?? App.shared.outlineColor
-        ColorPicker.shared.pick(current) { [weak self] color in self?.setColor(color.hexString, for: group) }
+        ColorPicker.shared.pick(group.tint ?? App.shared.outlineColor) { [weak self] color in
+            guard let self, let row = self.groups.firstIndex(where: { $0.id == group.id }) else { return }
+            self.groups[row].color = color.hexString
+            self.table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1])
+            self.save()
+        }
     }
     func controlTextDidEndEditing(_ notification: Notification) {
-        guard let field = notification.object as? NSTextField, let group = groups[safe: table.row(for: field)] else { return }
-        switch parseColor(field.stringValue) {
-        case .clear: setColor(nil, for: group)
-        case .color(let hex): setColor(hex, for: group)
-        case .invalid: NSSound.beep()
+        guard let field = notification.object as? NSTextField else { return }
+        let row = table.row(for: field)
+        guard groups.indices.contains(row) else { return }
+        if field.identifier?.rawValue == "color" {
+            switch parseColor(field.stringValue) {
+            case .clear: groups[row].color = nil
+            case .color(let hex): groups[row].color = hex
+            case .invalid: NSSound.beep()
+            }
+        } else {
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            groups[row].name = name.isEmpty ? groups[row].name : name
         }
+        table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1])
+        save()
     }
     func numberOfRows(in tableView: NSTableView) -> Int { groups.count }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         let group = groups[row]
         if column?.identifier.rawValue == "color" {
-            return colorCell(hex: App.shared.groupColors[group], row: row, target: self,
-                             swatchAction: #selector(pickColor(_:)), delegate: self)
+            return colorCell(hex: group.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
-        return NSTextField(labelWithString: group + " ▾")
+        let field = NSTextField(string: group.name)
+        field.identifier = .init("name")
+        field.isBordered = false
+        field.drawsBackground = false
+        field.delegate = self
+        return field
     }
 }
 
@@ -1886,19 +1988,20 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     static let shared = SettingsWindow()
     private let homeField = NSTextField()
     private let pinnedEditor = PagesEditor(id: "pinned", load: { App.shared.pinnedPages }, store: { App.shared.pinnedPages = $0 })
-    private let quickEditor = PagesEditor(id: "quick", groups: true, load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
-    private let groupEditor = GroupColorsEditor()
+    private let quickEditor = PagesEditor(id: "quick", groups: { App.shared.quickGroups },
+                                          load: { App.shared.quickPages }, store: { App.shared.quickPages = $0 })
+    private let groupEditor = GroupsEditor()
     private let colorWell = NSColorWell(style: .default)
     private let hexField = NSTextField()
     private let stylePopup = NSPopUpButton()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 780),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 880),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(name) Settings"
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 560, height: 620)
+        window.minSize = NSSize(width: 560, height: 800)
         super.init(window: window)
         window.delegate = self
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -1936,7 +2039,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         styleRow.spacing = 8
         ColorPicker.shared.willPick = { [weak self] in self?.colorWell.deactivate() }
         ColorPicker.shared.isBlocked = { [weak self] in self?.colorWell.isActive ?? false }
-        quickEditor.onSave = { [weak self] in self?.groupEditor.reload() }   // group names may have changed
+        groupEditor.onSave = { [weak self] in self?.quickEditor.reload() }   // the Group menus list the groups
 
         // The three lists, with draggable dividers between them (sizes remembered). The panes are added as
         // plain subviews with autoresizing masks, so the split view sets their frames (as arranged subviews
@@ -1946,26 +2049,28 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         split.isVertical = false
         split.dividerStyle = .paneSplitter
         split.delegate = self
-        let groupsHeading = Self.heading("Quick tab group colours")
         for pane in [
             Self.pane([Self.heading("Pinned tabs"),
                        Self.hint("Open first, in this order, every time the app starts, outlined in their Colour. "
                                  + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist. They can't be closed "
                                  + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
                        pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
+            Self.pane([Self.heading("Quick tab groups"),
+                       Self.hint("A group is one toolbar button, \u{201C}Name ▾\u{201D}, that opens a menu of its quick tabs. "
+                                 + "Create it here (name and colour; empty Colour = the default colour), then pick it in the "
+                                 + "Group column of the quick tabs."),
+                       groupEditor.scroll, groupEditor.buttons], grow: groupEditor.scroll),
             Self.pane([Self.heading("Quick tabs"),
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
                                  + "tabs they stay open and locked (⌘W takes one back to its page), but they're not in the "
-                                 + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them. Pages with the same Group share one button with a menu."),
+                                 + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
                        quickEditor.scroll, quickEditor.buttons], grow: quickEditor.scroll),
-            Self.pane([groupsHeading, Self.hint("One row per Group used above; empty Colour = the default colour."),
-                       groupEditor.scroll], grow: groupEditor.scroll),
         ] {
             pane.translatesAutoresizingMaskIntoConstraints = true
             pane.autoresizingMask = [.width, .height]
             split.addSubview(pane)
         }
-        split.autosaveName = "settingsLists"
+        split.autosaveName = "settingsPanes"   // new name: the panes' order changed
 
         // settings at the top; the lists' split view pinned below them down to the bottom, so it gets all
         // the height the window has left (as a stack view arranged subview it kept its natural height)
@@ -2001,7 +2106,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     required init?(coder: NSCoder) { fatalError() }
 
     // Each list keeps at least a few rows; the window grows/shrinks them in proportion
-    static let minPaneHeight: CGFloat = 130
+    static let minPaneHeight: CGFloat = 175   // heading, two lines of hint, a few table rows, + / −
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
         splitView.subviews[index].frame.minY + Self.minPaneHeight
     }
@@ -2013,8 +2118,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         let panes = splitView.subviews, divider = splitView.dividerThickness
         let available = splitView.bounds.height - divider * CGFloat(panes.count - 1)
         let oldTotal = panes.reduce(0) { $0 + $1.frame.height }
-        // first layout: pinned and quick tabs 2 parts each, group colours 1
-        let weights = oldTotal > 1 ? panes.map(\.frame.height) : panes.indices.map { $0 == 2 ? 1 : 2 }
+        // first layout: pinned tabs and quick tabs 2 parts each, groups (in between) 1
+        let weights = oldTotal > 1 ? panes.map(\.frame.height) : panes.indices.map { $0 == 1 ? 1.2 : 2 }
         let weightTotal = weights.reduce(0, +)
         var heights = weights.map { max(Self.minPaneHeight, ($0 / weightTotal * available).rounded()) }
         if let biggest = heights.indices.max(by: { heights[$0] < heights[$1] }) {

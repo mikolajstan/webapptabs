@@ -62,8 +62,9 @@ at the right end of the toolbar (before Share), tinted with the outline colour. 
 at launch, stay loaded and are locked (⌘W takes one back to its page), but they never appear in the tab bar
 and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
 to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
-pinned tab rather than a quick one. Quick pages with the same **Group** (a column in their list) share one
-button, `Group ▾`, that opens a menu of them – it shows the open page's icon. When the window is too narrow,
+pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: name +
+colour, **+** / **−**) are one button each, `Name ▾`, that opens a menu of their quick tabs – it shows the open
+page's icon; choose a quick tab's group in the Group column (a menu) of the quick tabs list. When the window is too narrow,
 the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 
 **Other**
@@ -81,8 +82,8 @@ the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
 home page, how pinned tabs show, the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA
-is the opacity), then three lists with draggable dividers between them: pinned tabs and quick tabs (Icon / Name /
-(Group) / **Colour** / Address, **+** / **−**, drag to reorder) and quick tab group colours. A page's or group's
+is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
+tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
 Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
 toolbar button's tint. (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).

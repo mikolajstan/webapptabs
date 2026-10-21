@@ -51,8 +51,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   field (`NSColor(hex:)` / `.hexString`, kept in sync), then an NSSplitView (frame-based panes added with
   `addSubview` + autoresizing masks, `resizeSubviewsWithOldSize` = proportional with a 130 px minimum;
   `arrangesAllSubviews` must stay on – off, plain subviews aren't panes and there are no dividers; as
-  arranged subviews with auto layout the panes kept their natural height) holding `PagesEditor` (pinned, quick
-  with Group column) and `GroupColorsEditor`. Per-page `PinnedPage.color` / group `groupColors` (hex) override
+  arranged subviews with auto layout the panes kept their natural height) holding `PagesEditor` (pinned), `GroupsEditor`
+  and `PagesEditor` (quick, Group menu column); minimum pane height 175. Per-page `PinnedPage.color` / group
+  `QuickGroup.color` (hex) override
   the default for outlines and toolbar buttons; colour cells use the shared `ColorPicker` (NSColorPanel target,
   yields to the default colour well while it's active).
   Outline colour is stored as "r g b a" (sRGB) under `pinnedOutlineColor`. Every change saves immediately and calls `App.applyPinnedPages()`
@@ -121,8 +122,10 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
    and skip them (on a quick tab: ⌃Tab → first, ⌃⇧Tab → last; `windowShouldClose` pre-selects the first
    non-quick tab when AppKit would land on a quick one); the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
-   window). Groups: `PinnedPage.group` (Settings column only on the quick list, `PagesEditor(groups:)`);
-   `PinnedSwitcher` makes one pill per page or per group (popup `menu(for:)`), and every switcher item
+   window). Groups: `QuickGroup` {id, name, color} in `quickGroups` (Settings → Quick tab groups,
+   `GroupsEditor`); a quick page points at one by `PinnedPage.groupId` (Group column = NSPopUpButton,
+   `PagesEditor(groups:)`). Earlier drafts stored the group name in `PinnedPage.group` + `quickGroupColors`:
+   `migrateQuickGroups()` converts that at launch. `PinnedSwitcher` makes one pill per page or per group (popup `menu(for:)`), and every switcher item
    gets a `menuFormRepresentation` (`overflowMenu()`) – without it, items moved into the toolbar's » overflow
    menu did nothing. Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
    item inserts across windows and throws on a duplicate. Settings lists are `PagesEditor` instances.
