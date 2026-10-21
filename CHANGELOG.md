@@ -3,6 +3,41 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [1.3] – 2026-10-21
+
+### Added
+- **Quick tab groups** (Settings → Quick tab groups): create a group with a name and a colour, then pick it
+  for quick tabs in the Group menu of the quick tabs list.
+  - A group is one toolbar button, "Name ⌄", that opens a menu of its quick tabs.
+  - The button shows the open page's icon and is highlighted while one of its pages is open; the menu ticks
+    the open page.
+  - Renaming a group updates everything in it, and removing a group makes its quick tabs separate buttons
+    again.
+- **Colours per tab**: a Colour column in the pinned tabs, quick tab groups and quick tabs lists.
+  - A page's or group's colour (swatch → colour picker, or hex) is its outline in the tab bar and its
+    toolbar button's tint.
+  - Empty uses the default colour (formerly "Outline colour").
+- **Widths per tab**: a Width column (points; empty = automatic) for pinned tabs, quick tab groups and quick
+  tabs.
+  - It sets a pinned tab's width in the tab bar (in every style) or the toolbar button's width.
+  - Content is centred in a wider button; a button too narrow for icon and name shows just the icon.
+- **Button labels**: what the separate row's pinned buttons and the quick tab buttons show (icon and name,
+  icon only, or name only), set separately for each.
+
+### Changed
+- Settings: the pinned tabs, quick tab groups and quick tabs lists sit in a split view with draggable
+  dividers, and all of them grow with the window. Before, only the pinned list did.
+
+### Fixed
+- **Duplicate notifications**: every pinned and quick tab runs its own copy of the site, so each notification
+  arrived once per tab. With Gmail's 2 pinned + 3 quick tabs, one chat message gave 5 notifications; it's
+  now shown once. A tagged notification replaces the earlier one with that tag, as in browsers.
+- **Tab bar visibility**: the tab bar is hidden only when it would show nothing, or when the window is a
+  single ordinary tab (as in macOS). Before, a single pinned tab or a single opened tab next to pinned and
+  quick tabs could end up invisible.
+- **Narrow windows**: when the toolbar moves the quick tabs (or the separate-row pinned tabs) into its »
+  menu, that menu entry now lists the pages, with groups as submenus. Before, it did nothing.
+
 ## [1.2.1] – 2026-10-21
 
 ### Changed
@@ -77,6 +112,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.3]: https://github.com/mikolajstan/webapptabs/releases/tag/1.3
 [1.2.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.2.1
 [1.2]: https://github.com/mikolajstan/webapptabs/releases/tag/1.2
 [1.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.1

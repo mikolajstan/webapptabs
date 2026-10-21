@@ -51,7 +51,8 @@ emoji, or an SF Symbol name such as `checklist`, `ticket`, `timer`). Settings �
 *Icon only* (36 px tabs, name on hover), *Icon and name, compact* (just as wide as icon + name; the other
 tabs get the rest), *Icon and name, full width*, *Name only, full width*, or *Separate row above the tabs* (buttons in the
 toolbar next to ‹ ›, tinted with the outline colour; the tab bar below only has the tabs you opened and
-stays hidden until you open one).
+stays hidden until you open one). Settings → "buttons:" next to it: icon and name, icon only or name only;
+the quick tab buttons have their own "Buttons show" setting.
 Pinned tabs are locked: no close button, ⌘W takes them back to their pinned page instead of closing, they
 can't be dragged, and anything that moves them (a tab dropped in between, one pulled into its own window)
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
@@ -62,7 +63,10 @@ at the right end of the toolbar (before Share), tinted with the outline colour. 
 at launch, stay loaded and are locked (⌘W takes one back to its page), but they never appear in the tab bar
 and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
 to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
-pinned tab rather than a quick one.
+pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: name +
+colour, **+** / **−**) are one button each, `Name ▾`, that opens a menu of their quick tabs – it shows the open
+page's icon; choose a quick tab's group in the Group column (a menu) of the quick tabs list. When the window is too narrow,
+the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.
@@ -78,8 +82,12 @@ pinned tab rather than a quick one.
 ## Settings (⌘,)
 
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
-home page, pinned tabs (Icon / Name / Address, **+** / **−**, drag to reorder), how pinned tabs show, outline colour,
-quick tabs (same editor) (colour
+home page, how pinned tabs show, the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA
+is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
+tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
+Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
+toolbar button's tint; its **Width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar
+or its button's width in the toolbar (a button too narrow for icon and name shows just the icon). (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
 Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
 

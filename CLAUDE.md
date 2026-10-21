@@ -47,8 +47,19 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   key-window events (those don't fire while the app is inactive). `didGetSelected(after:)` drives two
   Safari behaviours: middle-click ordering (`lastOpenedInBackground`) and "closing returns to opener"
   (`returnOnClose`, applied in `windowShouldClose` by pre-selecting the opener).
-- Settings window: `SettingsWindow` (⌘,): home page field, pinned-tabs table (Icon/Name/Address, +/−,
-  drag reorder), "Pinned tabs show" popup, outline colour well + hex field (`NSColor(hex:)` / `.hexString`, kept in sync).
+- Settings window: `SettingsWindow` (⌘,): home page field, "Pinned tabs show" popup, default colour well + hex
+  field (`NSColor(hex:)` / `.hexString`, kept in sync), then an NSSplitView (frame-based panes added with
+  `addSubview` + autoresizing masks, `resizeSubviewsWithOldSize` = proportional with a 130 px minimum;
+  `arrangesAllSubviews` must stay on – off, plain subviews aren't panes and there are no dividers; as
+  arranged subviews with auto layout the panes kept their natural height) holding `PagesEditor` (pinned), `GroupsEditor`
+  and `PagesEditor` (quick, Group menu column); minimum pane height 175. Per-page `PinnedPage.color` / group
+  `QuickGroup.color` (hex) override
+  the default for outlines and toolbar buttons; colour cells use the shared `ColorPicker` (NSColorPanel target,
+  yields to the default colour well while it's active). `pinnedButtonLabel` / `quickButtonLabel`
+  (`ButtonLabel`: icon and name / icon / name) set what the toolbar pills show (`PinnedSwitcher.update(show:)`).
+  `PinnedPage.width` / `QuickGroup.width` (points): a fixed width in `narrowPinnedTabs` (the pass also runs for
+  it in the full-width styles) and `Pill.fixedWidth` (content centred, name dropped by `fitLabel` if it
+  doesn't fit next to the icon).
   Outline colour is stored as "r g b a" (sRGB) under `pinnedOutlineColor`. Every change saves immediately and calls `App.applyPinnedPages()`
   (pins/unpins/renames/opens tabs, keeps pinned first, restores selection + key window).
 - Launch: `openStartTabs()` = pinned pages, then (if Restore Tabs) saved non-pinned tabs (first saved
@@ -97,7 +108,10 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    past the background. `Tab.updateToolbar` / `refreshPinnedSwitcher`; toolbars share the "main"
    identifier, so inserting in one adds to all).
    The tab bar is hidden while only pinned tabs are open by hiding the NSTitlebarAccessoryViewController
-   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs. Hide it in
+   (public `isHidden`; `updateTabBarVisibility`) – `toggleTabBar` does nothing with 2+ tabs. Rule: hidden only
+   when the bar would show nothing, or the window is a single ordinary tab (macOS's own behaviour); next to
+   pinned / quick tabs even one opened tab shows, and a lone pinned tab keeps it on. A one-tab window
+   has no accessory: there `toggleTabBar` (View → Show Tab Bar) is used to show a lone pinned tab. Hide it in
    **every** tab window: each has the accessory, but the NSTabBar view inside moves to the selected one.
    Hiding only the window that holds the bar made every tab switch resize the page by 36 px, which left
    Netivo drawn shifted under the toolbar and looking frozen/slow (user report).
@@ -115,7 +129,12 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
    and skip them (on a quick tab: ⌃Tab → first, ⌃⇧Tab → last; `windowShouldClose` pre-selects the first
    non-quick tab when AppKit would land on a quick one); the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
-   window). Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
+   window). Groups: `QuickGroup` {id, name, color} in `quickGroups` (Settings → Quick tab groups,
+   `GroupsEditor`); a quick page points at one by `PinnedPage.groupId` (Group column = NSPopUpButton,
+   `PagesEditor(groups:)`). Earlier drafts stored the group name in `PinnedPage.group` + `quickGroupColors`:
+   `migrateQuickGroups()` converts that at launch. `PinnedSwitcher` makes one pill per page or per group (popup `menu(for:)`), and every switcher item
+   gets a `menuFormRepresentation` (`overflowMenu()`) – without it, items moved into the toolbar's » overflow
+   menu did nothing. Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
    item inserts across windows and throws on a duplicate. Settings lists are `PagesEditor` instances.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;
    `_dragShouldBeginFromMouseDown:withExpiration:xHysteresis:yHysteresis:` hooked → original's answer AND
@@ -134,6 +153,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    are centred on their visible shape – SF Symbol images otherwise sit high, emoji low.
 5. **Mute**: `_setPageMuted:` via method IMP (+ JS shim blocking `play()` / AudioContext).
 6. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
+   Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
+   repeat of the same tag + title + body within 10 s (`recentNotifications`) and identifies a tagged one by
+   `"tag:" + tag` (app-wide, replaces the earlier one), an untagged one by tab + JS id.
 
 ## Decisions already made (don't redo)
 
