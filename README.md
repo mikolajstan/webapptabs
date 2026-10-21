@@ -47,7 +47,8 @@ Window → Merge All Windows · ⌘⇧T reopen closed tab · File → Recently C
 
 **Pinned tabs** (Settings → Pinned tabs) – open first, in order, every time the app starts, with a
 coloured outline (Settings → Outline colour; opacity 0 = none). Each has an **icon** (1–2 letters, an
-emoji, or an SF Symbol name such as `checklist`, `ticket`, `timer`). Settings → **Pinned tabs show**:
+emoji, an SF Symbol name such as `checklist`, `ticket`, `timer`, or an image: a file path or a web address
+like a site's `https://…/favicon.ico`). Settings → **Pinned tabs show**:
 *Icon only* (36 px tabs, name on hover), *Icon and name, compact* (just as wide as icon + name; the other
 tabs get the rest), *Icon and name, full width*, *Name only, full width*, or *Separate row above the tabs* (buttons in the
 toolbar next to ‹ ›, tinted with the outline colour; the tab bar below only has the tabs you opened and
@@ -63,8 +64,8 @@ at the right end of the toolbar (before Share), tinted with the outline colour. 
 at launch, stay loaded and are locked (⌘W takes one back to its page), but they never appear in the tab bar
 and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
 to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
-pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: name +
-colour, **+** / **−**) are one button each, `Name ▾`, that opens a menu of their quick tabs – it shows the open
+pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: icon, name,
+colour, width, **+** / **−**) are one button each, `Name ▾`, that opens a menu of their quick tabs – it shows the open
 page's icon; choose a quick tab's group in the Group column (a menu) of the quick tabs list. When the window is too narrow,
 the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 

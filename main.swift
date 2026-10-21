@@ -1,6 +1,7 @@
 // WebAppTabs — a tiny single-site browser: one app per web app, every page is a native macOS tab.
 import Cocoa
 import WebKit
+import CryptoKit
 import UserNotifications
 
 // The address the app opens: set in <app> → Home Page…, otherwise the one make-app.sh built it with
@@ -82,6 +83,7 @@ enum Setting {
     static let quickGroups = "quickGroups"        // [QuickGroup] as JSON
     static let pinnedButtons = "pinnedButtonLabel"   // ButtonLabel of the separate row's buttons
     static let quickButtons = "quickButtonLabel"     // ButtonLabel of the quick tab buttons
+    static let groupMenus = "groupMenuLabel"         // ButtonLabel of the items in a group's menu
     static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
     static let pinnedStyle = "pinnedTabStyle"
@@ -114,6 +116,60 @@ enum ButtonLabel: String, CaseIterable {
     }
 }
 
+// Icons given as an image file (/path or ~/path) or a web address (e.g. https://client.pl/favicon.ico).
+// Files load straight away; web images are downloaded once in the background and kept in the app's caches
+// folder, then the tabs and toolbar buttons are redrawn. Kept in memory while the app runs.
+@MainActor
+final class IconImages {
+    static let shared = IconImages()
+    private var images: [String: NSImage] = [:]
+    private var loading = Set<String>()
+
+    nonisolated static func isReference(_ text: String) -> Bool {
+        ["/", "~/", "file://", "http://", "https://"].contains { text.hasPrefix($0) }
+    }
+    func image(for reference: String) -> NSImage? {
+        if let image = images[reference] { return image }
+        if reference.hasPrefix("http://") || reference.hasPrefix("https://") {
+            if let data = try? Data(contentsOf: cacheFile(for: reference)), let image = NSImage(data: data) {
+                images[reference] = image
+                return image
+            }
+            download(reference)
+            return nil
+        }
+        let path = reference.hasPrefix("file://") ? URL(string: reference)?.path ?? reference
+            : (reference as NSString).expandingTildeInPath
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        images[reference] = image
+        return image
+    }
+    private func cacheFile(for reference: String) -> URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "WebAppTabs").appendingPathComponent("icons")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let name = SHA256.hash(data: Data(reference.utf8)).map { String(format: "%02x", $0) }.joined()
+        return dir.appendingPathComponent(name)
+    }
+    private func download(_ reference: String) {
+        guard !loading.contains(reference), let url = URL(string: reference) else { return }
+        loading.insert(reference)
+        let file = cacheFile(for: reference)
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            let image = data.flatMap(NSImage.init(data:))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    IconImages.shared.loading.remove(reference)
+                    guard let data, let image else { return }
+                    try? data.write(to: file)
+                    IconImages.shared.images[reference] = image
+                    App.shared.tabs.forEach { $0.applyPinnedLook(); $0.refreshPinnedSwitcher() }
+                }
+            }
+        }.resume()
+    }
+}
+
 // A group of quick tabs: one toolbar button ("Name ▾") that opens a menu of its pages
 struct QuickGroup: Codable, Equatable {
     var id = UUID().uuidString
@@ -121,6 +177,11 @@ struct QuickGroup: Codable, Equatable {
     var color: String?   // "#RRGGBBAA"; nil = the default colour
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
     var width: Double?   // the button's width in points; nil = automatic
+    // its button's icon (letters, emoji or an SF Symbol name, like a tab's); nil = the open page's icon
+    var icon: String?
+    @MainActor var iconImage: NSImage? {
+        icon.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : PinnedPage(name: name, url: "", icon: $0).iconImage }
+    }
 }
 
 // Settings → Width cells: points, 24…800; empty = automatic
@@ -155,8 +216,22 @@ struct PinnedPage: Codable, Equatable {
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
-        if Self.isSymbol(text) { return text }
+        if Self.isSymbol(text) || IconImages.isReference(text) { return text }
         return text.isEmpty ? String(name.prefix(1)).uppercased() : String(text.prefix(2))
+    }
+    // what Settings stores for a typed icon: nil when empty; symbol names and image paths / addresses whole,
+    // anything else cut to 2 characters
+    static func normalizedIcon(_ text: String) -> String? {
+        let icon = text.trimmingCharacters(in: .whitespaces)
+        if icon.isEmpty { return nil }
+        return isSymbol(icon) || IconImages.isReference(icon) ? icon : String(icon.prefix(2))
+    }
+
+    // `size` centred in `rect`, scaled down (keeping its proportions) if it doesn't fit
+    static func fit(_ size: NSSize, in rect: NSRect) -> NSRect {
+        let scale = min(1, rect.width / max(size.width, 1), rect.height / max(size.height, 1))
+        let w = size.width * scale, h = size.height * scale
+        return NSRect(x: rect.midX - w / 2, y: rect.midY - h / 2, width: w, height: h)
     }
 
     static func isSymbol(_ text: String) -> Bool {
@@ -166,15 +241,23 @@ struct PinnedPage: Codable, Equatable {
     // Every icon is drawn into the same 16×16 square, centred on its visible shape (symbols and
     // glyphs come with uneven padding that would otherwise sit them high or low in the tab).
     // Symbols are template images, so the tab bar tints them; text uses the current text colour.
-    var iconImage: NSImage {
+    @MainActor var iconImage: NSImage {
         let canvas = NSSize(width: 16, height: 16)
+        // an image file or web address (e.g. a site's favicon), in its own colours; the first letter until loaded
+        if IconImages.isReference(shownIcon) {
+            if let picture = IconImages.shared.image(for: shownIcon) {
+                return NSImage(size: canvas, flipped: false) { rect in
+                    picture.draw(in: Self.fit(picture.size, in: rect))
+                    return true
+                }
+            }
+            return PinnedPage(name: name, url: url).iconImage
+        }
         if Self.isSymbol(shownIcon),
            let symbol = NSImage(systemSymbolName: shownIcon, accessibilityDescription: name)?
                .withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) {
             let image = NSImage(size: canvas, flipped: false) { rect in
-                let size = symbol.size
-                symbol.draw(in: NSRect(x: (rect.width - size.width) / 2, y: (rect.height - size.height) / 2,
-                                       width: size.width, height: size.height))
+                symbol.draw(in: Self.fit(symbol.size, in: rect))   // wide ones (person.3) shrink to fit
                 return true
             }
             image.isTemplate = true
@@ -605,7 +688,8 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
         pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color,
                               show: App.shared.pinnedButtonLabel)
         quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color,
-                             groups: App.shared.quickGroups, show: App.shared.quickButtonLabel)
+                             groups: App.shared.quickGroups, show: App.shared.quickButtonLabel,
+                             menus: App.shared.groupMenuLabel)
         // when the window is too narrow the toolbar moves them into its » menu, which uses these
         for item in window?.toolbar?.items ?? [] {
             guard let switcher = item.view as? PinnedSwitcher else { continue }
@@ -1119,6 +1203,10 @@ final class App: NSObject, NSApplicationDelegate {
         get { UserDefaults.standard.string(forKey: Setting.pinnedButtons).flatMap(ButtonLabel.init) ?? .iconAndName }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: Setting.pinnedButtons); tabs.forEach { $0.refreshPinnedSwitcher() } }
     }
+    var groupMenuLabel: ButtonLabel {
+        get { UserDefaults.standard.string(forKey: Setting.groupMenus).flatMap(ButtonLabel.init) ?? .iconAndName }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Setting.groupMenus); tabs.forEach { $0.refreshPinnedSwitcher() } }
+    }
     var quickButtonLabel: ButtonLabel {
         get { UserDefaults.standard.string(forKey: Setting.quickButtons).flatMap(ButtonLabel.init) ?? .iconAndName }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: Setting.quickButtons); tabs.forEach { $0.refreshPinnedSwitcher() } }
@@ -1631,6 +1719,7 @@ final class PinnedSwitcher: NSStackView {
     private var pages: [PinnedPage] = []
     private var selected: Int?
     private var groups: [QuickGroup] = []
+    private var menuLabel = ButtonLabel.iconAndName   // what a group's menu items show
     // one entry per page, or per group: its pages, at the place of the first of them
     private var entries: [(group: QuickGroup?, indices: [Int])] {
         var entries: [(group: QuickGroup?, indices: [Int])] = []
@@ -1647,10 +1736,11 @@ final class PinnedSwitcher: NSStackView {
 
     // color: the default; a page's own colour, or its group's, wins
     func update(pages: [PinnedPage], selected: Int?, color: NSColor, groups: [QuickGroup] = [],
-                show: ButtonLabel = .iconAndName) {
+                show: ButtonLabel = .iconAndName, menus: ButtonLabel = .iconAndName) {
         self.pages = pages
         self.selected = selected
         self.groups = groups
+        self.menuLabel = menus
         spacing = 6
         // the toolbar's glass capsule ends exactly at the item's edge – keep the pills inside its rounded
         // end (26 px pills in a 36 px capsule → 5 px all round)
@@ -1667,7 +1757,7 @@ final class PinnedSwitcher: NSStackView {
             if let group = entry.group {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
-                pill.icon.image = shown.iconImage
+                pill.icon.image = group.iconImage ?? shown.iconImage   // its own icon, else the open page's
                 pill.label.stringValue = group.name
                 pill.label.isHidden = show == .icon
                 pill.icon.isHidden = show == .name
@@ -1707,14 +1797,16 @@ final class PinnedSwitcher: NSStackView {
         }
     }
 
-    // the pages at `indices` (a group's dropdown), the open one ticked
-    func menu(for indices: [Int]) -> NSMenu {
+    // the pages at `indices` (a group's dropdown, items as Settings → "Menus show"), the open one ticked
+    func menu(for indices: [Int], show: ButtonLabel? = nil) -> NSMenu {
+        let show = show ?? menuLabel
         let menu = NSMenu()
         for index in indices {
-            let item = NSMenuItem(title: pages[index].name, action: #selector(picked(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: show == .icon ? "" : pages[index].name, action: #selector(picked(_:)), keyEquivalent: "")
             item.target = self
             item.tag = index
-            item.image = pages[index].iconImage
+            item.image = show == .name ? nil : pages[index].iconImage
+            item.toolTip = show == .icon ? pages[index].name : nil
             item.state = index == selected ? .on : .off
             menu.addItem(item)
         }
@@ -1726,11 +1818,12 @@ final class PinnedSwitcher: NSStackView {
         for entry in entries {
             if let group = entry.group {
                 let item = NSMenuItem(title: group.name, action: nil, keyEquivalent: "")
-                item.image = pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
-                item.submenu = self.menu(for: entry.indices)
+                item.image = group.iconImage
+                    ?? pages[selected.flatMap { entry.indices.contains($0) ? $0 : nil } ?? entry.indices[0]].iconImage
+                item.submenu = self.menu(for: entry.indices, show: .iconAndName)
                 menu.addItem(item)
             } else {
-                self.menu(for: entry.indices).items.forEach { $0.menu?.removeItem($0); menu.addItem($0) }
+                self.menu(for: entry.indices, show: .iconAndName).items.forEach { $0.menu?.removeItem($0); menu.addItem($0) }
             }
         }
         return menu
@@ -1908,7 +2001,7 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         guard pages.indices.contains(row) else { return }
         if field.identifier?.rawValue == "icon" {
             let icon = field.stringValue.trimmingCharacters(in: .whitespaces)
-            pages[row].icon = icon.isEmpty ? nil : PinnedPage.isSymbol(icon) ? icon : String(icon.prefix(2))
+            pages[row].icon = PinnedPage.normalizedIcon(icon)
         } else if field.identifier?.rawValue == "name" {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             pages[row].name = name.isEmpty ? pages[row].name : name
@@ -2008,7 +2101,8 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     override init() {
         super.init()
-        for (id, title, width) in [("name", "Name", 200.0), ("color", "Colour", 140.0), ("width", "Width", 60.0)] {
+        for (id, title, width) in [("icon", "Icon", 70.0), ("name", "Name", 180.0), ("color", "Colour", 130.0),
+                                   ("width", "Width", 60.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
             column.width = width
@@ -2064,7 +2158,7 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         ColorPicker.shared.pick(group.tint ?? App.shared.outlineColor) { [weak self] color in
             guard let self, let row = self.groups.firstIndex(where: { $0.id == group.id }) else { return }
             self.groups[row].color = color.hexString
-            self.table.reloadData(forRowIndexes: [row], columnIndexes: [0, 1])
+            self.table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(0..<self.table.numberOfColumns))
             self.save()
         }
     }
@@ -2084,6 +2178,9 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             case .width(let width): groups[row].width = width
             case .invalid: NSSound.beep()
             }
+        } else if field.identifier?.rawValue == "icon" {
+            let icon = field.stringValue.trimmingCharacters(in: .whitespaces)
+            groups[row].icon = PinnedPage.normalizedIcon(icon)
         } else {
             let name = field.stringValue.trimmingCharacters(in: .whitespaces)
             groups[row].name = name.isEmpty ? groups[row].name : name
@@ -2097,13 +2194,20 @@ final class GroupsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if column?.identifier.rawValue == "color" {
             return colorCell(hex: group.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
-        let isWidth = column?.identifier.rawValue == "width"
-        let field = NSTextField(string: isWidth ? group.width.map { String(Int($0)) } ?? "" : group.name)
-        field.identifier = .init(isWidth ? "width" : "name")
-        if isWidth {
+        let id = column?.identifier.rawValue ?? "name"
+        let field = NSTextField(string: id == "width" ? group.width.map { String(Int($0)) } ?? ""
+                                    : id == "icon" ? group.icon ?? "" : group.name)
+        field.identifier = .init(id)
+        if id == "width" {
             field.placeholderString = "auto"
             field.alignment = .right
             field.toolTip = "Width in points (24–800); empty = automatic"
+        }
+        if id == "icon" {
+            field.placeholderString = "page"
+            field.alignment = .center
+            field.toolTip = "1–2 letters, an emoji, an SF Symbol name (like folder), or an image file path / web address; "
+                + "empty = the open page's icon"
         }
         field.isBordered = false
         field.drawsBackground = false
@@ -2125,6 +2229,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     private let stylePopup = NSPopUpButton()
     private let pinnedButtonsPopup = NSPopUpButton()
     private let quickButtonsPopup = NSPopUpButton()
+    private let groupMenusPopup = NSPopUpButton()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
@@ -2166,7 +2271,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         stylePopup.addItems(withTitles: PinnedStyle.allCases.map(\.title))
         stylePopup.target = self
         stylePopup.action = #selector(styleChanged)
-        for popup in [pinnedButtonsPopup, quickButtonsPopup] {
+        for popup in [pinnedButtonsPopup, quickButtonsPopup, groupMenusPopup] {
             popup.addItems(withTitles: ButtonLabel.allCases.map(\.title))
             popup.target = self
             popup.action = #selector(buttonLabelChanged(_:))
@@ -2190,20 +2295,22 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         for pane in [
             Self.pane([Self.heading("Pinned tabs"),
                        Self.hint("Open first, in this order, every time the app starts, outlined in their Colour. "
-                                 + "Icon: 1–2 letters, an emoji, or an SF Symbol name like checklist. They can't be closed "
+                                 + "Icon: 1–2 letters, an emoji, an SF Symbol name like checklist, or an image file path / "
+                                 + "web address (e.g. a site's favicon.ico). They can't be closed "
                                  + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
                        pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
             Self.pane([Self.heading("Quick tab groups"),
-                       Self.hint("A group is one toolbar button, \u{201C}Name ▾\u{201D}, that opens a menu of its quick tabs. "
-                                 + "Create it here (name and colour; empty Colour = the default colour), then pick it in the "
-                                 + "Group column of the quick tabs."),
+                       Self.hint("A group is one toolbar button, \u{201C}Name ⌄\u{201D}, that opens a menu of its quick tabs. "
+                                 + "Create it here (an empty Icon shows the open page's icon, an empty Colour the default "
+                                 + "colour), then pick it in the Group column of the quick tabs."),
                        groupEditor.scroll, groupEditor.buttons], grow: groupEditor.scroll),
             Self.pane([Self.heading("Quick tabs"),
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
                                  + "tabs they stay open and locked (⌘W takes one back to its page), but they're not in the "
                                  + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
                        quickEditor.scroll, Self.row([quickEditor.buttons, NSView(),
-                                                     NSTextField(labelWithString: "Buttons show:"), quickButtonsPopup])],
+                                                     NSTextField(labelWithString: "Buttons:"), quickButtonsPopup,
+                                                     NSTextField(labelWithString: "Group menus:"), groupMenusPopup])],
                       grow: quickEditor.scroll),
         ] {
             pane.translatesAutoresizingMaskIntoConstraints = true
@@ -2308,7 +2415,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     }
     @objc private func buttonLabelChanged(_ popup: NSPopUpButton) {
         let label = ButtonLabel.allCases[popup.indexOfSelectedItem]
-        if popup === pinnedButtonsPopup { App.shared.pinnedButtonLabel = label } else { App.shared.quickButtonLabel = label }
+        if popup === pinnedButtonsPopup { App.shared.pinnedButtonLabel = label }
+        else if popup === quickButtonsPopup { App.shared.quickButtonLabel = label }
+        else { App.shared.groupMenuLabel = label }
     }
     private static func row(_ views: [NSView]) -> NSStackView {
         let row = NSStackView(views: views)
@@ -2324,6 +2433,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         stylePopup.selectItem(at: PinnedStyle.allCases.firstIndex(of: App.shared.pinnedStyle) ?? 0)
         pinnedButtonsPopup.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.pinnedButtonLabel) ?? 0)
         quickButtonsPopup.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.quickButtonLabel) ?? 0)
+        groupMenusPopup.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.groupMenuLabel) ?? 0)
         pinnedButtonsPopup.isEnabled = App.shared.pinnedStyle == .separateRow
         colorWell.color = App.shared.outlineColor
         hexField.stringValue = App.shared.outlineColor.hexString
