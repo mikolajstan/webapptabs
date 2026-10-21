@@ -9,7 +9,7 @@ All notable changes to WebAppTabs. Versions match the git tags and the
 - **Quick tab groups** (Settings → Quick tab groups): create a group with a name and a colour, then choose
   it for quick tabs in the Group menu of the quick tabs list. A group is one toolbar button, `Name ▾`, that
   opens a menu of its quick tabs. The button shows the open page's icon and is highlighted while one of its
-  pages is open, and the menu ticks the open page. Renaming a group updates everything in it, and removing
+  pages is open, and the menu ticks the open page. A chevron marks the button as a menu. Renaming a group updates everything in it, and removing
   a group makes its quick tabs separate buttons again.
 
 - **Colours per tab**: a Colour column in the pinned tabs, quick tab groups and quick tabs lists. A page's
@@ -29,6 +29,10 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   and all of them grow with the window (before, only the pinned list did).
 
 ### Fixed
+- A notification arrived once per open tab of the site (every pinned and quick tab runs its own copy – with
+  Gmail's 2 pinned + 3 quick tabs, one chat message gave 5 notifications). It's now shown once: a repeat of
+  the same one within 10 s is dropped, and a tagged notification replaces the earlier one with that tag
+  app-wide, as in browsers.
 - The tab bar is hidden only when it would show nothing, or when the window is a single ordinary tab (as in
   macOS). Before, a single pinned tab (next to quick tabs, or alone in its window) or a single opened tab next
   to pinned / quick tabs could end up invisible.

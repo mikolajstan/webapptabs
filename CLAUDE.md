@@ -153,6 +153,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    are centred on their visible shape – SF Symbol images otherwise sit high, emoji low.
 5. **Mute**: `_setPageMuted:` via method IMP (+ JS shim blocking `play()` / AudioContext).
 6. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
+   Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
+   repeat of the same tag + title + body within 10 s (`recentNotifications`) and identifies a tagged one by
+   `"tag:" + tag` (app-wide, replaces the earlier one), an untagged one by tab + JS id.
 
 ## Decisions already made (don't redo)
 

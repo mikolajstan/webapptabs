@@ -1462,6 +1462,9 @@ extension App: WKDownloadDelegate {
     }
 }
 
+// notification key (tag + title + body) → when it was shown, to drop the copies other tabs post
+@MainActor private var recentNotifications: [String: Date] = [:]
+
 extension App: WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     // The page created a Notification → post it to macOS
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1469,17 +1472,26 @@ extension App: WKScriptMessageHandler, UNUserNotificationCenterDelegate {
               let tab = tabs.first(where: { $0.webView === message.webView }) else { return }
         let center = UNUserNotificationCenter.current()
         if let closed = body["close"] as? String {
-            center.removeDeliveredNotifications(withIdentifiers: [tab.id + closed])
+            center.removeDeliveredNotifications(withIdentifiers: [tab.id + closed, "tag:" + closed])
             return
         }
         let jsID = body["id"] as? String ?? ""
         let tag = body["tag"] as? String ?? ""
+        let title = body["title"] as? String ?? "", text = body["body"] as? String ?? ""
+        // Every pinned / quick tab runs its own copy of the site, and each posts the same notification
+        // (Gmail: one per open Gmail page). Show it once: skip a repeat of the same one within 10 s.
+        let key = [tag, title, text].joined(separator: "\u{1}")
+        let now = Date()
+        recentNotifications = recentNotifications.filter { now.timeIntervalSince($0.value) < 10 }
+        guard recentNotifications[key] == nil else { return }
+        recentNotifications[key] = now
         let content = UNMutableNotificationContent()
-        content.title = body["title"] as? String ?? ""
-        content.body = body["body"] as? String ?? ""
+        content.title = title
+        content.body = text
         content.sound = .default
         content.userInfo = ["tab": tab.id, "id": jsID]
-        center.add(UNNotificationRequest(identifier: tab.id + (tag.isEmpty ? jsID : tag), content: content, trigger: nil)) {
+        // a tagged notification replaces the earlier one with that tag, as in browsers (one per app, not per tab)
+        center.add(UNNotificationRequest(identifier: tag.isEmpty ? tab.id + jsID : "tag:" + tag, content: content, trigger: nil)) {
             if let error = $0 { NSLog("notification failed: \(error)") }
         }
     }
@@ -1551,6 +1563,8 @@ final class PinnedSwitcher: NSStackView {
     final class Pill: NSView {
         let icon = NSImageView()
         let label = NSTextField(labelWithString: "")
+        let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "menu")!
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))!)   // group buttons: opens a menu
         var onPress: (() -> Void)?
         // Settings → Width; nil = as wide as the content
         var fixedWidth: CGFloat? {
@@ -1571,7 +1585,8 @@ final class PinnedSwitcher: NSStackView {
             label.lineBreakMode = .byTruncatingTail   // a narrow fixed width shortens the name…
             label.setContentCompressionResistancePriority(.init(100), for: .horizontal)
             let row = NSStackView()
-            row.setViews([icon, label], in: .center)   // centred when a set Width is wider than the content
+            row.setViews([icon, label, chevron], in: .center)   // centred when a set Width is wider than the content
+            chevron.isHidden = true
             row.spacing = 5
             row.edgeInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 12)
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -1592,13 +1607,10 @@ final class PinnedSwitcher: NSStackView {
         }
         override func accessibilityPerformPress() -> Bool { onPress?(); return true }
         // …and when even that doesn't fit next to the icon, only the icon shows (the name is in the tooltip)
-        func fitLabel(fullText: String, short: String?) {
+        func fitLabel() {
             guard let width = fixedWidth, !icon.isHidden, !label.isHidden else { return }
-            label.stringValue = fullText
-            let needed = 11 + 16 + 5 + label.intrinsicContentSize.width + 12
-            if width < needed {
-                if let short { label.stringValue = short } else { label.isHidden = true }
-            }
+            let needed = 11 + 16 + 5 + label.intrinsicContentSize.width + 12 + (chevron.isHidden ? 0 : 5 + 10)
+            if width < needed { label.isHidden = true }
         }
     }
 
@@ -1642,13 +1654,14 @@ final class PinnedSwitcher: NSStackView {
                 // a group: the open page's icon (or the first one's), its name ▾, and a menu on click
                 let shown = pages[isSelected ? selected! : entry.indices[0]]
                 pill.icon.image = shown.iconImage
-                pill.label.stringValue = show == .icon ? "▾" : group.name + " ▾"
-                pill.label.isHidden = false
+                pill.label.stringValue = group.name
+                pill.label.isHidden = show == .icon
                 pill.icon.isHidden = show == .name
+                pill.chevron.isHidden = false
                 let names = entry.indices.map { pages[$0].name }.joined(separator: ", ")
                 pill.toolTip = show == .icon ? "\(group.name): \(names)" : names
                 pill.fixedWidth = group.width.map { CGFloat($0) }
-                pill.fitLabel(fullText: pill.label.stringValue, short: "▾")
+                pill.fitLabel()
                 pill.setAccessibilityLabel(group.name)
                 pill.onPress = { [weak self, weak pill] in
                     guard let self, let pill else { return }
@@ -1660,13 +1673,15 @@ final class PinnedSwitcher: NSStackView {
                 pill.label.stringValue = page.name
                 pill.icon.isHidden = show == .name
                 pill.label.isHidden = show == .icon
+                pill.chevron.isHidden = true
                 pill.toolTip = show == .icon ? "\(page.name) – \(page.url)" : page.url
                 pill.fixedWidth = page.width.map { CGFloat($0) }
-                pill.fitLabel(fullText: page.name, short: nil)
+                pill.fitLabel()
                 pill.setAccessibilityLabel(page.name)
                 pill.onPress = { [weak self] in self?.onSelect?(index) }
             }
             pill.label.textColor = isSelected ? .labelColor : .secondaryLabelColor
+            pill.chevron.contentTintColor = pill.label.textColor
             pill.setAccessibilityValue(isSelected ? "selected" : nil)
             // with no colour (opacity 0) the selected one still gets a neutral background
             let background = alpha < 0.05 ? (isSelected ? NSColor.quaternaryLabelColor : .clear)
