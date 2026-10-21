@@ -6,9 +6,16 @@ All notable changes to WebAppTabs. Versions match the git tags and the
 ## [Unreleased]
 
 ### Added
-- **Group icons**: an Icon column in Settings → Quick tab groups (1–2 letters, an emoji or an SF Symbol name,
-  like a tab's). The group's button and its entry in the » overflow menu show it. Empty keeps the open page's
-  icon, as before.
+- **Group icons**: an Icon column in Settings → Quick tab groups, like a tab's icon. The group's button and its
+  entry in the » overflow menu show it. Empty keeps the open page's icon, as before.
+- **Image icons**: any Icon field also takes an image file path (`/…` or `~/…`) or a web address, such as a
+  client site's `https://…/favicon.ico`. Web images are downloaded once in the background and cached; the
+  first letter shows until then. Images keep their own colours.
+- **Group menus** setting (Settings → Quick tabs): what the pages in a group's menu show – icon and name, icon
+  only, or name only.
+
+### Fixed
+- Wide SF Symbols (e.g. `person.3`) were cut off at the sides of the 16 pt icon; they're scaled down to fit.
 
 ## [1.3] – 2026-10-21
 
