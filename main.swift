@@ -1563,8 +1563,21 @@ final class PinnedSwitcher: NSStackView {
     final class Pill: NSView {
         let icon = NSImageView()
         let label = NSTextField(labelWithString: "")
-        let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "menu")!
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))!)   // group buttons: opens a menu
+        let chevron = NSImageView(image: Pill.chevronImage)   // group buttons: opens a menu
+        // chevron.down drawn centred (on its own size) in a 12×16 canvas, the icons' height – as a plain symbol
+        // image the view placed it by the symbol's alignment rect, a little above the text's middle
+        static let chevronImage: NSImage = {
+            let symbol = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "menu")!
+                .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))!
+            let image = NSImage(size: NSSize(width: 12, height: 16), flipped: false) { rect in
+                let size = symbol.size
+                symbol.draw(in: NSRect(x: (rect.width - size.width) / 2, y: (rect.height - size.height) / 2,
+                                       width: size.width, height: size.height))
+                return true
+            }
+            image.isTemplate = true
+            return image
+        }()
         var onPress: (() -> Void)?
         // Settings → Width; nil = as wide as the content
         var fixedWidth: CGFloat? {
@@ -1596,6 +1609,7 @@ final class PinnedSwitcher: NSStackView {
                 row.topAnchor.constraint(equalTo: topAnchor), row.bottomAnchor.constraint(equalTo: bottomAnchor),
                 heightAnchor.constraint(equalToConstant: 26),
                 icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
+                chevron.widthAnchor.constraint(equalToConstant: 12), chevron.heightAnchor.constraint(equalToConstant: 16),
             ])
             setAccessibilityElement(true)
             setAccessibilityRole(.button)
