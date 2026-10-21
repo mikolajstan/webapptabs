@@ -112,7 +112,8 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    after the pinned ones (`allPinnedPages`), plain tab look, always width 0 + hidden in the layout pass (which
    therefore also runs in the icon-only and full-width styles when quick tabs exist: fixed widths 36 / fit /
    0, the rest share). Switcher `.quickSwitcher` before Share. ⌃Tab / ⌘1…⌘9 are our own (`handleTabShortcut`)
-   and skip them; the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
+   and skip them (on a quick tab: ⌃Tab → first, ⌃⇧Tab → last; `windowShouldClose` pre-selects the first
+   non-quick tab when AppKit would land on a quick one); the "current" tab is the group's selectedWindow (falls back to selectedTab without a key
    window). Each Tab's toolbar has its own identifier (`main-<id>`): with a shared identifier AppKit mirrors
    item inserts across windows and throws on a duplicate. Settings lists are `PagesEditor` instances.
    **Locked pinned tabs**: `_shouldShowCloseButtonForTabBarViewItem:` hooked → no close button;

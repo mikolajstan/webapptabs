@@ -332,10 +332,18 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         closingInfo = (webView.title, left)
         // Like Safari: closing a tab you came to straight from the tab that opened it goes back there.
         // Otherwise AppKit selects the tab to the right (or left, for the last tab), as Safari does.
+        // Quick tabs count as sitting before the pinned ones: if AppKit would land on one (closing the last
+        // tab right after them), go to the first pinned tab instead.
+        let isQuick = { (w: NSWindow) in App.shared.tabs.contains { $0.window === w && $0.pinned?.isQuick == true } }
         if let back = returnOnClose?.window, App.shared.tabs.contains(where: { $0 === returnOnClose }),
            sender.tabGroup?.selectedWindow === sender, group.contains(back) {
             sender.tabGroup?.selectedWindow = back
             back.makeKeyAndOrderFront(nil)
+        } else if sender.tabGroup?.selectedWindow === sender,
+                  let next = group[safe: index + 1] ?? group[safe: index - 1], isQuick(next),
+                  let first = group.first(where: { $0 !== sender && !isQuick($0) }) {
+            sender.tabGroup?.selectedWindow = first
+            first.makeKeyAndOrderFront(nil)
         }
         return true
     }
@@ -1233,12 +1241,18 @@ final class App: NSObject, NSApplicationDelegate {
         // quick tabs are left out: they're reached through their toolbar buttons only
         let isQuick = { (w: NSWindow) in self.tabs.contains { $0.window === w && $0.pinned?.isQuick == true } }
         if keyCode == 48, mods.contains(.control) {
-            guard let current = group.firstIndex(of: window.tabGroup?.selectedWindow ?? window) else { return false }
-            let step = mods.contains(.shift) ? -1 : 1
-            for offset in 1..<max(group.count, 2) {
-                let candidate = group[((current + step * offset) % group.count + group.count) % group.count]
-                if !isQuick(candidate) { candidate.makeKeyAndOrderFront(nil); break }
+            // the cycle skips quick tabs; on one, they count as sitting before the first pinned tab:
+            // ⌃Tab goes to the first tab, ⌃⇧Tab to the last
+            let cycle = group.filter { !isQuick($0) }
+            let backwards = mods.contains(.shift)
+            let selected = window.tabGroup?.selectedWindow ?? window
+            let target: NSWindow?
+            if let current = cycle.firstIndex(of: selected) {
+                target = cycle[safe: ((current + (backwards ? -1 : 1)) % cycle.count + cycle.count) % cycle.count]
+            } else {
+                target = backwards ? cycle.last : cycle.first
             }
+            target?.makeKeyAndOrderFront(nil)
             return true
         }
         if mods == .command, let n = Int(chars ?? ""), (1...9).contains(n) {
