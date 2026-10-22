@@ -3,6 +3,18 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## Unreleased
+
+### Added
+- **Load** setting per pinned and quick tab (a column in both Settings lists), to save memory. Every loaded tab
+  runs its own copy of the site; with Gmail that's 1 GB+ each.
+  - **Always** (default): loaded at launch, as before.
+  - **When opened**: loaded the first time you open it, then stays loaded.
+  - **Unload idle**: unloaded again after some minutes in the background. Its process ends and the memory is
+    freed; opening it reloads the page where it was, with its back/forward history.
+  - **Unload idle tabs after** *n* minutes in Settings (default 10).
+  - A tab that isn't loaded doesn't send notifications.
+
 ## [1.4] – 2026-10-21
 
 ### Added

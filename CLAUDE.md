@@ -8,7 +8,7 @@ the code: how it fits together, decisions already made, and traps already hit.
 
 | File | What |
 |---|---|
-| `main.swift` (~1250 lines) | the whole Tabs app (AppKit + WKWebView, no Xcode project) |
+| `main.swift` (~2650 lines) | the whole Tabs app (AppKit + WKWebView, no Xcode project) |
 | `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app, or `--all` rebuilds every Tabs app |
 | `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to Safari |
 | `tools/test.sh`, `tools/harness.py` | scripted tests in a throwaway app (see Testing) |
@@ -156,7 +156,16 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    ~/Library/Caches/<bundle id>/icons, then tabs/buttons are redrawn; first letter meanwhile).
    `PinnedPage.normalizedIcon` keeps symbol names and image references whole, cuts other text to 2 chars.
 5. **Mute**: `_setPageMuted:` via method IMP (+ JS shim blocking `play()` / AudioContext).
-6. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
+6. **Load modes** (`PinnedPage.load`: `LoadMode` always / whenOpened / unloadIdle; Settings → Load column,
+   `unloadIdleMinutes`). A deferred tab (`Tab(deferred:)`, set by `openTab` for non-always pinned pages) and
+   an unloaded one hold a **fresh, never-loaded WebView**: WebKit starts no WebContent process until the first
+   load, so it costs nothing. `Tab.webView` is therefore a `var` – `attach(_:)` wires a web view up (delegates,
+   KVO, contentView, ‹ › toolbar targets); never keep a reference to a tab's web view. `unload()` saves
+   `interactionState` (history + page), swaps in an empty web view (the old process exits);
+   `loadIfNeeded()` runs from the selection KVO handler; `open(_:)` loads a URL and clears the unloaded state.
+   `App.unloadIdleTabs()` runs every 10 s: `backgroundSince` is set on the first tick a tab isn't its
+   window's selected tab, cleared by `didGetSelected`. Test: `_webProcessIdentifier` (KVC) is 0 for no process.
+7. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
    Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
    repeat of the same tag + title + body within 10 s (`recentNotifications`) and identifies a tagged one by
    `"tag:" + tag` (app-wide, replaces the earlier one), an untagged one by tab + JS id.
