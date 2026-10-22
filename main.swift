@@ -86,6 +86,7 @@ enum Setting {
     static let groupMenus = "groupMenuLabel"         // ButtonLabel of the items in a group's menu
     static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
+    static let unloadAfter = "unloadIdleMinutes"     // LoadMode.unloadIdle: minutes in the background
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
 }
@@ -112,6 +113,26 @@ enum ButtonLabel: String, CaseIterable {
         case .iconAndName: "Icon and name"
         case .icon: "Icon only"
         case .name: "Name only"
+        }
+    }
+}
+
+// Settings → Load: when a pinned / quick tab's page is loaded. Every loaded tab runs its own copy of the
+// site in its own web content process (Gmail: 1 GB+ each), so rarely used ones can wait until opened.
+enum LoadMode: String, Codable, CaseIterable {
+    case always, whenOpened, unloadIdle
+    var title: String {
+        switch self {
+        case .always: "Always"
+        case .whenOpened: "When opened"
+        case .unloadIdle: "Unload idle"
+        }
+    }
+    var help: String {
+        switch self {
+        case .always: "Loaded at launch and stays loaded (needed for notifications)"
+        case .whenOpened: "Loaded the first time you open it, then stays loaded until you quit"
+        case .unloadIdle: "Loaded when you open it, unloaded again after the idle time in the background"
         }
     }
 }
@@ -213,6 +234,9 @@ struct PinnedPage: Codable, Equatable {
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
     // Its own width in points (tab in the tab bar / toolbar button); nil = automatic
     var width: Double?
+    // When its page is loaded (Settings → Load); nil = always
+    var load: LoadMode?
+    var loadMode: LoadMode { load ?? .always }
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -313,7 +337,7 @@ final class WebView: WKWebView {
 
 final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     let id = UUID().uuidString
-    let webView: WebView
+    private(set) var webView: WebView
     private var observations: [NSKeyValueObservation] = []
 
     // Pinned tabs show their short name and a coloured outline in the tab bar, and can't be closed
@@ -350,15 +374,14 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         return switcher
     }()
 
-    init(load url: URL?, configuration: WKWebViewConfiguration) {
+    // deferred: don't load `url` until the tab is selected (Settings → Load: When opened / Unload idle)
+    init(load url: URL?, configuration: WKWebViewConfiguration, deferred: Bool = false) {
         webView = WebView(frame: .zero, configuration: configuration)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.tabbingMode = .preferred            // ← this line is the whole tab bar
         window.tabbingIdentifier = "webapp"
-        window.contentView = webView
-        window.initialFirstResponder = webView
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -377,11 +400,30 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 600).isActive = true
+        attach(webView)
+        if deferred {
+            unloadedURL = url
+            isUnloaded = true
+        } else {
+            applyMute()
+            if let url { webView.load(URLRequest(url: url)) }
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    // Puts a web view in the window and wires it up (at init, and when unloading swaps in an empty one)
+    private func attach(_ webView: WebView) {
+        self.webView = webView
+        window?.contentView = webView
+        window?.initialFirstResponder = webView
         webView.customUserAgent = safariUA
         webView.allowsBackForwardNavigationGestures = true
         webView.isInspectable = true               // Safari → Develop → <Mac name> → Netivo Tabs
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        for item in window?.toolbar?.items ?? [] where [.back, .forward].contains(item.itemIdentifier) {
+            item.target = webView
+        }
         observations = [
             webView.observe(\.title) { [weak self] web, _ in
                 MainActor.assumeIsolated {
@@ -402,10 +444,49 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
                 MainActor.assumeIsolated { self?.updateNavigationButtons() }
             },
         ]
-        applyMute()
-        if let url { webView.load(URLRequest(url: url)) }
+        updateNavigationButtons()
     }
-    required init?(coder: NSCoder) { fatalError() }
+
+    // Settings → Load. An unloaded tab has an empty web view: WebKit starts no web content process for it
+    // until it loads something, so it takes no memory. Its title and place stay; selecting it loads the
+    // page again, back where it was (history included).
+    private(set) var isUnloaded = false
+    private var unloadedURL: URL?
+    private var unloadedState: Any?   // WKWebView.interactionState: back/forward list + current page
+    var backgroundSince: Date?        // since when it's not the selected tab of its window (idle unloading)
+
+    func unload() {
+        guard !isUnloaded else { return }
+        let old = webView
+        unloadedState = old.interactionState
+        unloadedURL = old.url ?? pinned.flatMap { URL(string: $0.url) }
+        isUnloaded = true
+        old.stopLoading()
+        old.navigationDelegate = nil
+        old.uiDelegate = nil
+        observations = []
+        attach(WebView(frame: old.frame, configuration: App.shared.makeConfiguration()))
+        old.removeFromSuperview()
+    }
+    func loadIfNeeded() {
+        guard isUnloaded else { return }
+        isUnloaded = false
+        applyMute()
+        if let state = unloadedState {
+            webView.interactionState = state
+        } else if let url = unloadedURL ?? pinned.flatMap({ URL(string: $0.url) }) {
+            webView.load(URLRequest(url: url))
+        }
+        unloadedState = nil
+        unloadedURL = nil
+    }
+    // Loads a page in this tab, also when it's unloaded (⌘W on a pinned tab, a changed address, Home Page)
+    func open(_ url: URL) {
+        isUnloaded = false
+        unloadedState = nil
+        unloadedURL = nil
+        webView.load(URLRequest(url: url))
+    }
 
     // Besides the JS shim, mute the whole page (every frame) in WebKit itself.
     // _setPageMuted: is private API; the public one only covers microphone and camera.
@@ -479,6 +560,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
 
     // The user switched to this tab (from `previous`)
     func didGetSelected(after previous: Tab?) {
+        backgroundSince = nil
         // Came straight from the opener → closing returns to it; from anywhere else → normal order
         returnOnClose = previous != nil && previous === opener ? opener : nil
         lastOpenedInBackground = nil
@@ -780,6 +862,7 @@ final class App: NSObject, NSApplicationDelegate {
                 guard !app.isOpeningInBackground, let window = group.selectedWindow,
                       let tab = app.tabs.first(where: { $0.window === window }), tab !== app.selectedTab else { return }
                 tab.didGetSelected(after: app.selectedTab)
+                tab.loadIfNeeded()
                 app.selectedTab = tab
                 app.outlinePinnedTabs()   // the tab bar now lives in the newly selected window
                 app.tabs.forEach { $0.refreshPinnedSwitcher() }
@@ -1077,9 +1160,11 @@ final class App: NSObject, NSApplicationDelegate {
         isOpeningTab = true
         isOpeningInBackground = inBackground
         defer { isOpeningTab = false; isOpeningInBackground = false }
-        let tab = Tab(load: url, configuration: configuration ?? makeConfiguration())
+        let deferred = (pinned?.loadMode ?? .always) != .always
+        let tab = Tab(load: url, configuration: configuration ?? makeConfiguration(), deferred: deferred)
         tab.opener = opener
         tab.pinned = pinned
+        if deferred, let pinned { tab.window?.title = pinned.name }   // until it loads (Window menu)
         let current = newWindow ? nil : (to ?? tabs.last)?.window
         if let current, let window = tab.window {
             // Insert right after `after` (or the opener) by index; addTabbedWindow(_:ordered:) doesn't
@@ -1125,6 +1210,9 @@ final class App: NSObject, NSApplicationDelegate {
         }
         installUserScripts()
         openStartTabs()
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+            MainActor.assumeIsolated { App.shared.unloadIdleTabs() }
+        }
         didLaunch = true
         pendingURLs.forEach(openFromOutside)
         pendingURLs = []
@@ -1151,7 +1239,7 @@ final class App: NSObject, NSApplicationDelegate {
     // View → Home Page (⌘⇧H): load the home page in the current tab
     @objc func goHome(_ sender: Any?) {
         let tab = tabs.first { $0.window === NSApp.keyWindow } ?? tabs.last
-        if let tab { tab.webView.load(URLRequest(url: homeURL)) } else { openTab(url: homeURL) }
+        if let tab { tab.open(homeURL) } else { openTab(url: homeURL) }
     }
 
     @objc func showSettings(_ sender: Any?) { SettingsWindow.shared.show() }
@@ -1168,6 +1256,24 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     // MARK: Pinned tabs
+    // Settings → Load "Unload idle": a tab that has been in the background this long gets unloaded
+    var unloadAfterMinutes: Double {
+        get { UserDefaults.standard.object(forKey: Setting.unloadAfter) as? Double ?? 10 }
+        set { UserDefaults.standard.set(newValue, forKey: Setting.unloadAfter) }
+    }
+    func unloadIdleTabs() {
+        let now = Date()
+        for tab in tabs where tab.pinned?.loadMode == .unloadIdle && !tab.isUnloaded {
+            guard let window = tab.window, (window.tabGroup?.selectedWindow ?? window) !== window else {
+                tab.backgroundSince = nil   // in front
+                continue
+            }
+            let since = tab.backgroundSince ?? now
+            tab.backgroundSince = since
+            if now.timeIntervalSince(since) >= unloadAfterMinutes * 60 { tab.unload() }
+        }
+    }
+
     // The tab you're on, also while another window (e.g. Settings) is in front
     var frontTab: Tab? { tabs.first { $0.window === NSApp.keyWindow } ?? selectedTab ?? tabs.last }
 
@@ -1268,7 +1374,8 @@ final class App: NSObject, NSApplicationDelegate {
             if let tab = tabs.first(where: { $0.pinned?.id == page.id }) {
                 let addressChanged = tab.pinned?.url != page.url
                 tab.pinned = page
-                if addressChanged, let url = URL(string: page.url) { tab.webView.load(URLRequest(url: url)) }
+                if addressChanged, let url = URL(string: page.url) { tab.open(url) }
+                if page.loadMode == .always { tab.loadIfNeeded() }
                 ordered.append(tab)
             } else if let url = URL(string: page.url) {
                 let anchor = ordered.last ?? frontTab
@@ -1491,7 +1598,7 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     @objc func closeTab(_ sender: Any?) {
         let window = (NSApp.keyWindow ?? selectedTab?.window).map { $0.tabGroup?.selectedWindow ?? $0 }   // the tab you're looking at
         if let tab = tabs.first(where: { $0.window === window }), let page = tab.pinned {
-            if let url = URL(string: page.url) { tab.webView.load(URLRequest(url: url)) }
+            if let url = URL(string: page.url) { tab.open(url) }
         } else {
             window?.performClose(sender)
         }
@@ -1920,10 +2027,10 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         rowType = NSPasteboard.PasteboardType("local.webapptabs.\(id)-row")
         super.init()
         let columns = groups != nil
-            ? [("icon", "Icon", 56.0), ("name", "Name", 100.0), ("group", "Group", 100.0), ("color", "Colour", 106.0),
-               ("width", "Width", 52.0), ("url", "Address", 180.0)]
-            : [("icon", "Icon", 56.0), ("name", "Name", 110.0), ("color", "Colour", 106.0), ("width", "Width", 52.0),
-               ("url", "Address", 250.0)]
+            ? [("icon", "Icon", 44.0), ("name", "Name", 96.0), ("group", "Group", 92.0), ("color", "Colour", 106.0),
+               ("width", "Width", 46.0), ("load", "Load", 106.0), ("url", "Address", 150.0)]
+            : [("icon", "Icon", 44.0), ("name", "Name", 110.0), ("color", "Colour", 106.0), ("width", "Width", 46.0),
+               ("load", "Load", 106.0), ("url", "Address", 200.0)]
         for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -1994,6 +2101,13 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         pages[popup.tag].groupId = popup.selectedItem?.representedObject as? String
         save()
     }
+    @objc private func loadChosen(_ popup: NSPopUpButton) {
+        guard pages.indices.contains(popup.tag) else { return }
+        let mode = LoadMode.allCases[popup.indexOfSelectedItem]
+        pages[popup.tag].load = mode == .always ? nil : mode
+        popup.toolTip = mode.help
+        save()
+    }
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
@@ -2035,11 +2149,22 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         if id == "color" {
             return colorCell(hex: page.color, row: row, target: self, swatchAction: #selector(pickColor(_:)), delegate: self)
         }
+        if id == "load" {
+            let popup = Self.smallPopup()
+            for mode in LoadMode.allCases {
+                popup.addItem(withTitle: mode.title)
+                popup.lastItem?.toolTip = mode.help
+            }
+            popup.selectItem(at: LoadMode.allCases.firstIndex(of: page.loadMode) ?? 0)
+            popup.toolTip = page.loadMode.help
+            popup.tag = row
+            popup.target = self
+            popup.action = #selector(loadChosen(_:))
+            return popup
+        }
         if id == "group", let groups = groups?() {
             // "–" or one of the groups made in Settings → Quick tab groups
-            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-            popup.controlSize = .small
-            popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            let popup = Self.smallPopup()
             popup.addItem(withTitle: "–")
             for group in groups {
                 popup.addItem(withTitle: group.name)
@@ -2065,6 +2190,13 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         field.lineBreakMode = .byTruncatingTail
         field.delegate = self
         return field
+    }
+
+    private static func smallPopup() -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        return popup
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
@@ -2230,6 +2362,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     private let pinnedButtonsPopup = NSPopUpButton()
     private let quickButtonsPopup = NSPopUpButton()
     private let groupMenusPopup = NSPopUpButton()
+    private let idleField = NSTextField()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
@@ -2276,6 +2409,14 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
             popup.target = self
             popup.action = #selector(buttonLabelChanged(_:))
         }
+        idleField.alignment = .right
+        idleField.delegate = self
+        idleField.toolTip = "Minutes (1–1440)"
+        idleField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let idleRow = NSStackView(views: [NSTextField(labelWithString: "Unload idle tabs after:"), idleField,
+                                          NSTextField(labelWithString: "minutes in the background"),
+                                          Self.hint("tabs whose Load is \u{201C}Unload idle\u{201D}")])
+        idleRow.spacing = 8
         let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup,
                                            NSTextField(labelWithString: "  buttons:"), pinnedButtonsPopup])
         styleRow.spacing = 8
@@ -2297,7 +2438,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                        Self.hint("Open first, in this order, every time the app starts, outlined in their Colour. "
                                  + "Icon: 1–2 letters, an emoji, an SF Symbol name like checklist, or an image file path / "
                                  + "web address (e.g. a site's favicon.ico). They can't be closed "
-                                 + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first."),
+                                 + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first. "
+                                 + "Load: every loaded tab takes its own memory – rarely used ones can load only when opened "
+                                 + "(no notifications until then)."),
                        pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
             Self.pane([Self.heading("Quick tab groups"),
                        Self.hint("A group is one toolbar button, \u{201C}Name ⌄\u{201D}, that opens a menu of its quick tabs. "
@@ -2306,8 +2449,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                        groupEditor.scroll, groupEditor.buttons], grow: groupEditor.scroll),
             Self.pane([Self.heading("Quick tabs"),
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
-                                 + "tabs they stay open and locked (⌘W takes one back to its page), but they're not in the "
-                                 + "tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
+                                 + "tabs they're locked (⌘W takes one back to its page) and have a Load setting, but they're "
+                                 + "not in the tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
                        quickEditor.scroll, Self.row([quickEditor.buttons, NSView(),
                                                      NSTextField(labelWithString: "Buttons:"), quickButtonsPopup,
                                                      NSTextField(labelWithString: "Group menus:"), groupMenusPopup])],
@@ -2324,7 +2467,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         let stack = NSStackView(views: [
             Self.heading("Home page"), homeField,
             Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
-            styleRow, outlineRow,
+            styleRow, outlineRow, idleRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -2438,6 +2581,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         colorWell.color = App.shared.outlineColor
         hexField.stringValue = App.shared.outlineColor.hexString
         homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""
+        idleField.stringValue = Self.minutes(App.shared.unloadAfterMinutes)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -2470,6 +2614,12 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
         if field === homeField { return saveHome() }
+        if field === idleField {
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+            if let minutes = Double(text) { App.shared.unloadAfterMinutes = min(1440, max(1, minutes.rounded())) } else { NSSound.beep() }
+            field.stringValue = Self.minutes(App.shared.unloadAfterMinutes)
+            return
+        }
         if field === hexField {
             guard let color = NSColor(hex: field.stringValue) else {
                 NSSound.beep()
@@ -2481,6 +2631,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
             field.stringValue = App.shared.outlineColor.hexString
             refreshDefaultSwatches()
         }
+    }
+    private static func minutes(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(value)
     }
     private func saveHome() {
         let text = homeField.stringValue.trimmingCharacters(in: .whitespaces)
