@@ -3,7 +3,7 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## Unreleased
+## [1.5] – 2026-10-22
 
 ### Added
 - **Load** setting per pinned and quick tab (a column in both Settings lists), to save memory. Every loaded tab
@@ -138,6 +138,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.5]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5
 [1.4]: https://github.com/mikolajstan/webapptabs/releases/tag/1.4
 [1.3]: https://github.com/mikolajstan/webapptabs/releases/tag/1.3
 [1.2.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.2.1
