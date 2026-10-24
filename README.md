@@ -7,7 +7,6 @@ Installed apps (in `~/Applications`, pinned to the Dock):
 
 | App | Site | Built from |
 |---|---|---|
-| **Netivo Tabs** | https://projekty.netivo.pl/admin/tasks | `Projekty Netivo – Zadania.app` (Safari web app) |
 | **Gmail Tabs** | https://mail.google.com/mail/ | `Gmail.app` (Safari web app) |
 | **GitHub Tabs** | https://github.com/ | `GitHub.app` (Safari web app) |
 | **Link Router** | – | set as the **default web browser**; sends links to the right Tabs app |
@@ -57,7 +56,7 @@ the quick tab buttons have their own "Buttons show" setting.
 Pinned tabs are locked: no close button, ⌘W takes them back to their pinned page instead of closing, they
 can't be dragged, and anything that moves them (a tab dropped in between, one pulled into its own window)
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
-Netivo: ⏱ Timesheets · `checklist` Zadania · `ticket` Tickety.
+For example: ⏱ Timesheets · `checklist` Tasks · `ticket` Tickets.
 
 **Quick tabs** (Settings → Quick tabs, same list editor) – pages you jump to now and then, shown as buttons
 at the right end of the toolbar (before Share), tinted with the outline colour. Like pinned tabs they open
@@ -92,7 +91,7 @@ process (Gmail: 1 GB+ each in Activity Monitor), so rarely used ones don't have 
 
 ## Settings (⌘,)
 
-Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.NetivoTabs`):
+Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.GmailTabs`):
 home page, how pinned tabs show, the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA
 is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
 tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
