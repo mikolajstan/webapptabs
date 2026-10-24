@@ -3,6 +3,12 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [1.5.1] – 2026-10-24
+
+### Changed
+- Clean-up: removed references to a site the project isn't related to from the README, code comments and
+  notes. Examples now use Gmail and GitHub.
+
 ## [1.5] – 2026-10-22
 
 ### Added
@@ -138,6 +144,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.5.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5.1
 [1.5]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5
 [1.4]: https://github.com/mikolajstan/webapptabs/releases/tag/1.4
 [1.3]: https://github.com/mikolajstan/webapptabs/releases/tag/1.3

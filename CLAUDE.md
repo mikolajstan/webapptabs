@@ -21,15 +21,14 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 ## The user's setup (Oct 2026)
 
 - Mac: external monitor (main) + built-in display **below** it → built-in has negative y coordinates.
-- Apps: **Netivo Tabs** (`local.webapptabs.NetivoTabs`, projekty.netivo.pl), **Gmail Tabs**
-  (`local.webapptabs.GmailTabs`) and **GitHub Tabs** (`local.webapptabs.GitHubTabs`, github.com), pinned in
-  the Dock. GitHub Tabs replaced the GitHub Safari web app's Dock tile in place (edited
+- Apps: **Gmail Tabs** (`local.webapptabs.GmailTabs`), **GitHub Tabs** (`local.webapptabs.GitHubTabs`, github.com) and a
+  third Tabs app for a work site, all pinned in the Dock. The work site's name, address and settings are
+  kept out of the repo (in Claude's local memory) – don't write them into tracked files. GitHub Tabs replaced the GitHub Safari web app's Dock tile in place (edited
   `com.apple.dock persistent-apps` via export → change one tile → import → `killall Dock`). Old Safari web apps may still exist; make-app.sh only
   needs them for a first build.
 - **Link Router** (`local.linkrouter`) is the default web browser.
-- Netivo pinned tabs: ⏱ Timesheets, `checklist` Zadania, `ticket` Tickety, shown as icon + name (compact); Restore Tabs is **off** in Netivo.
-  Gmail Tabs: Mute Site on.
-- Inspect/modify settings: `defaults read local.webapptabs.NetivoTabs`. `pinnedPages`/`session` are JSON
+- Gmail Tabs: Mute Site on.
+- Inspect/modify settings: `defaults read local.webapptabs.GmailTabs`. `pinnedPages`/`session` are JSON
   stored as data. Write single keys with `defaults write … -data <hex>`, **never `defaults import`** on a real
   app (it replaces the whole domain). Quit the app first (`pkill -f "<Name>.app/Contents/MacOS/WebAppTabs"`).
 - The user writes Polish/English, prefers custom code over third-party apps, wants things verified (screens,
@@ -114,7 +113,7 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    has no accessory: there `toggleTabBar` (View → Show Tab Bar) is used to show a lone pinned tab. Hide it in
    **every** tab window: each has the accessory, but the NSTabBar view inside moves to the selected one.
    Hiding only the window that holds the bar made every tab switch resize the page by 36 px, which left
-   Netivo drawn shifted under the toolbar and looking frozen/slow (user report).
+   pages drawn shifted under the toolbar and looking frozen/slow (user report).
    **Clicks**: NSTabBar finds the clicked tab arithmetically from its equal-width layout
    (`_visibleTabIndexAtPoint:stackingRegion:ignorePointsOutsideOfLayoutBounds:`, point in the buttons'
    row coordinates) → hooked to answer from the real frames whenever kept frames are active

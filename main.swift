@@ -313,7 +313,7 @@ func belongsInApp(_ url: URL) -> Bool {
     return isOwnSite(url) || (isSameDomain(url) && signInHosts.contains(firstLabel))
 }
 
-// Same domain, any subdomain: accounts.google.com for mail.google.com, x.netivo.pl for projekty.netivo.pl
+// Same domain, any subdomain: accounts.google.com for mail.google.com, gist.github.com for github.com
 func isSameDomain(_ url: URL) -> Bool {
     let domain = { (u: URL) in u.host?.lowercased().split(separator: ".").suffix(2).joined(separator: ".") }
     return domain(url) != nil && domain(url) == domain(homeURL)
@@ -418,7 +418,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         window?.initialFirstResponder = webView
         webView.customUserAgent = safariUA
         webView.allowsBackForwardNavigationGestures = true
-        webView.isInspectable = true               // Safari → Develop → <Mac name> → Netivo Tabs
+        webView.isInspectable = true               // Safari → Develop → <Mac name> → Gmail Tabs
         webView.navigationDelegate = self
         webView.uiDelegate = self
         for item in window?.toolbar?.items ?? [] where [.back, .forward].contains(item.itemIdentifier) {
@@ -802,7 +802,7 @@ final class App: NSObject, NSApplicationDelegate {
     var downloads: [ObjectIdentifier: URL] = [:]
     private(set) var isQuitting = false
 
-    // Settings are per app (UserDefaults is keyed by bundle ID), so Gmail can be muted and Netivo not
+    // Settings are per app (UserDefaults is keyed by bundle ID), so Gmail can be muted and GitHub not
     var restoreTabs: Bool { UserDefaults.standard.bool(forKey: Setting.restoreTabs) }
     var isMuted: Bool { UserDefaults.standard.bool(forKey: Setting.muteSite) }
     // Settings → "Pinned tabs show": 36 px icon tabs, or full-width tabs with icon + name or the name
@@ -1735,7 +1735,7 @@ extension NSColor {
     }
 }
 
-// "projekty.netivo.pl/admin" → https://projekty.netivo.pl/admin; nil if it isn't a web address
+// "github.com/settings" → https://github.com/settings; nil if it isn't a web address
 func webURL(from text: String) -> URL? {
     var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return nil }
