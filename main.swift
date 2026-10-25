@@ -2244,6 +2244,15 @@ final class TabMemoryWindow: NSWindowController, NSWindowDelegate, NSTableViewDa
         ])
         window.contentView = root
         window.center()
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let isEscape = event.keyCode == 53, windowNumber = event.windowNumber
+            let handled = isEscape && MainActor.assumeIsolated {
+                guard let window = self?.window, window.windowNumber == windowNumber else { return false }
+                window.performClose(nil)   // Esc, as in Settings
+                return true
+            }
+            return handled ? nil : event
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
