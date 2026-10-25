@@ -3,11 +3,11 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## Unreleased
+## [1.7.1] – 2026-10-25
 
 ### Changed
 - View → **Unload Tab ▸** and **Unload Background Tabs** keep the menu open, so you can unload one tab after
-  another; an unloaded tab leaves the list.
+  another; an unloaded tab leaves the list, and when nothing's left both show as unavailable.
 
 ### Fixed
 - Esc closes the Tab Memory window.
@@ -189,6 +189,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.7.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7.1
 [1.7]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7
 [1.6]: https://github.com/mikolajstan/webapptabs/releases/tag/1.6
 [1.5.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5.1
