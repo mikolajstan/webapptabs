@@ -3,7 +3,7 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## Unreleased
+## [1.7] – 2026-10-25
 
 ### Changed
 - **Settings window in tabs** (General, Pinned Tabs, Quick Tabs, Loading along the toolbar), instead of one long
@@ -180,6 +180,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.7]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7
 [1.6]: https://github.com/mikolajstan/webapptabs/releases/tag/1.6
 [1.5.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5.1
 [1.5]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5
