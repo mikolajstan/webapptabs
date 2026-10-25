@@ -2541,22 +2541,21 @@ final class InfoButton: NSButton {
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func showText() {
+        // the text 300 pt wide (without a width the popover shrank it to a sliver), the popover sized to fit it
+        let width: CGFloat = 300
         let label = NSTextField(wrappingLabelWithString: text)
-        label.preferredMaxLayoutWidth = 300
-        let box = NSView()
-        label.translatesAutoresizingMaskIntoConstraints = false
+        label.preferredMaxLayoutWidth = width
+        let height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 10_000)).height ?? 40)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: width + 28, height: height + 24))
+        label.frame = NSRect(x: 14, y: 12, width: width, height: height)
         box.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
-            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
-            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
-        ])
         let controller = NSViewController()
         controller.view = box
+        controller.preferredContentSize = box.frame.size
         let popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = controller
+        popover.contentSize = box.frame.size
         popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
     }
 }
