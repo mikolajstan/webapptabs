@@ -174,7 +174,8 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    **Staying signed in** (issue #8): the reported "session expired in the morning" was **not** a cold-launch
    problem – tested with only the remember-me cookie, 3 tabs loading at once all signed in fine. It's pages
    left open while the Mac sleeps: the session expires server-side and the next AJAX action fails, with no
-   redirect. So `observeSleep()` reloads every loaded tab after ≥ 1 h of system or screen sleep
+   redirect. So `observeSleep()` reloads `alwaysLoadedTabs` (loaded pinned + quick on Always – user's choice;
+   ordinary tabs are left alone) after system or screen sleep ≥ `reloadAfterSleepHours` (Settings, default 2)
    (`awaySince`, `didWake`). Login pages: `isLoginPage` (Settings → Login page prefix, else a heuristic);
    `Tab` notes one on server redirect / commit and, when a later `didFinish` is on the site but not the login
    page, calls `App.didSignIn` → reloads the loaded always-loaded tabs (pinned + quick on Always), the tab

@@ -86,8 +86,9 @@ session. **Reload All Tabs** (⌘⇧R) reloads every loaded tab. **Window → Ta
 state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload buttons and the total.
 
 **Keeping pages signed in**
-- After the Mac (or its screens) slept for an hour or more, every loaded tab is reloaded: pages from before
-  have an expired session, and the next click on them fails with "session expired".
+- After the Mac (or its screens) slept for 2 hours or more (Settings → **Reload after sleeping**, 1–48 h), the
+  pinned tabs and the quick tabs on Always reload: pages from before have an expired session, and the next
+  click on them fails with "session expired". Other tabs are left as they are.
 - When a tab lands on the site's **login page** and you sign in there, the pinned tabs and the quick tabs on
   Always reload, and that tab goes back to its own pinned page. The login page is recognised by its address
   (login, sign-in, authentication, sso…, or a sign-in host like accounts.google.com), or set it in Settings →

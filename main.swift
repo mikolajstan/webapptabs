@@ -87,6 +87,7 @@ enum Setting {
     static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
     static let unloadAfter = "unloadIdleMinutes"     // LoadMode.unloadIdle: minutes in the background
+    static let reloadAfterSleep = "reloadAfterSleepHours"   // always-loaded tabs reload after sleeping this long
     static let loginPage = "loginPage"               // the site's sign-in address; nil = recognised by its address
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
@@ -1390,6 +1391,9 @@ final class App: NSObject, NSApplicationDelegate {
         loaded.forEach { $0.webView.reload() }
     }
 
+    // pinned tabs and quick tabs on Always, while loaded: the ones kept signed in (sign-in, waking)
+    var alwaysLoadedTabs: [Tab] { tabs.filter { !$0.isUnloaded && $0.pinned?.loadMode == .always } }
+
     // Signed in again in `tab` (it had landed on the site's login page): the other always-loaded tabs –
     // pinned, and quick ones on Always – are signed out or about to fail too, so they're reloaded; the tab
     // itself goes back to its pinned page (sites send you to their start page after signing in)
@@ -1397,17 +1401,20 @@ final class App: NSObject, NSApplicationDelegate {
     func didSignIn(in tab: Tab) {
         guard Date().timeIntervalSince(lastSignInReload) > 30 else { return }   // no reload loops
         lastSignInReload = Date()
-        let others = tabs.filter { $0 !== tab && !$0.isUnloaded && $0.pinned?.loadMode == .always }
+        let others = alwaysLoadedTabs.filter { $0 !== tab }
         Diagnostics.log("signed in: \(tab.displayName) – reload \(others.count) always-loaded tabs")
         others.forEach { $0.webView.reload() }
         if let page = tab.pinned, let url = URL(string: page.url), tab.webView.url != url { tab.open(url) }
     }
 
-    // After the Mac (or just its screens) slept for an hour or more, pages loaded before are out of date: the
-    // site's session ran out, and the next click fails with "session expired" without a sign-in page. So every
-    // loaded tab is reloaded on waking.
+    // After the Mac (or just its screens) slept for a while (Settings, default 2 h), pages loaded before are out
+    // of date: the site's session ran out, and the next click fails with "session expired" without a sign-in
+    // page. So the always-loaded tabs (pinned, quick on Always) reload on waking; other tabs are left alone.
     var awaySince: Date?
-    static let reloadAfterAway: TimeInterval = 3600
+    var reloadAfterSleepHours: Double {
+        get { UserDefaults.standard.object(forKey: Setting.reloadAfterSleep) as? Double ?? 2 }
+        set { UserDefaults.standard.set(newValue, forKey: Setting.reloadAfterSleep) }
+    }
     func observeSleep() {
         let center = NSWorkspace.shared.notificationCenter
         for (name, label) in [(NSWorkspace.willSleepNotification, "sleep"), (NSWorkspace.screensDidSleepNotification, "screens sleep")] {
@@ -1429,7 +1436,10 @@ final class App: NSObject, NSApplicationDelegate {
         awaySince = nil
         let away = Date().timeIntervalSince(since)
         Diagnostics.log("\(label) after \(Int(away / 60)) min")
-        if away >= Self.reloadAfterAway { reloadLoadedTabs("after waking") }
+        guard away >= reloadAfterSleepHours * 3600 else { return }
+        let reloading = alwaysLoadedTabs
+        Diagnostics.log("reload \(reloading.count) always-loaded tabs (after waking)")
+        reloading.forEach { $0.webView.reload() }
     }
 
     // The tab you're on, also while another window (e.g. Settings) is in front
@@ -2735,14 +2745,15 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     private let groupMenusPopup = NSPopUpButton()
     private let idleField = NSTextField()
     private let loginField = NSTextField()
+    private let sleepField = NSTextField()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 880),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 960),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(name) Settings"
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 560, height: 800)
+        window.minSize = NSSize(width: 560, height: 880)
         super.init(window: window)
         window.delegate = self
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -2789,6 +2800,14 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                                           NSTextField(labelWithString: "minutes in the background"),
                                           Self.hint("tabs whose Load is \u{201C}Unload idle\u{201D}")])
         idleRow.spacing = 8
+        sleepField.alignment = .right
+        sleepField.delegate = self
+        sleepField.toolTip = "Hours (1–48)"
+        sleepField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let sleepRow = NSStackView(views: [NSTextField(labelWithString: "Reload after sleeping:"), sleepField,
+                                           NSTextField(labelWithString: "hours or more"),
+                                           Self.hint("pinned tabs and quick tabs on Always, so their session isn\u{2019}t expired")])
+        sleepRow.spacing = 8
         loginField.placeholderString = "automatic"
         loginField.delegate = self
         loginField.toolTip = "The site's sign-in page. Empty: addresses with login, sign-in, authentication, sso… "
@@ -2846,7 +2865,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         let stack = NSStackView(views: [
             Self.heading("Home page"), homeField,
             Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
-            styleRow, outlineRow, idleRow, loginRow,
+            styleRow, outlineRow, idleRow, sleepRow, loginRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -2961,6 +2980,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         hexField.stringValue = App.shared.outlineColor.hexString
         homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""
         idleField.stringValue = Self.minutes(App.shared.unloadAfterMinutes)
+        sleepField.stringValue = Self.minutes(App.shared.reloadAfterSleepHours)
         loginField.stringValue = UserDefaults.standard.string(forKey: Setting.loginPage) ?? ""
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -3000,6 +3020,12 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
             guard let url = webURL(from: text) else { return NSSound.beep() }
             UserDefaults.standard.set(url.absoluteString, forKey: Setting.loginPage)
             field.stringValue = url.absoluteString
+            return
+        }
+        if field === sleepField {
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+            if let hours = Double(text) { App.shared.reloadAfterSleepHours = min(48, max(1, (hours * 2).rounded() / 2)) } else { NSSound.beep() }
+            field.stringValue = Self.minutes(App.shared.reloadAfterSleepHours)
             return
         }
         if field === idleField {

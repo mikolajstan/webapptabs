@@ -13,8 +13,9 @@ All notable changes to WebAppTabs. Versions match the git tags and the
 - **Window → Tab Memory**: every tab with its state (loaded / unloaded / not loaded yet) and memory, as
   Activity Monitor shows it, with Unload / Reload buttons and the total.
 - Unloaded tabs are **dimmed** in the tab bar, the toolbar buttons and their menus.
-- **Reload after waking**: after the Mac or its screens slept for an hour or more, loaded tabs reload. Pages
-  left open overnight had an expired session, and the next action on them failed with "session expired".
+- **Reload after waking**: after the Mac or its screens slept for 2 hours or more (Settings → **Reload after
+  sleeping**), the pinned tabs and the quick tabs on Always reload. Pages left open overnight had an expired
+  session, and the next action on them failed with "session expired".
 - **Login page detection**: after you sign in on the site's login page, the pinned tabs and the quick tabs on
   Always reload, and that tab goes back to its pinned page. The login page is recognised by its address, or
   set in Settings → **Login page**.
