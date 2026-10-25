@@ -969,13 +969,15 @@ final class App: NSObject, NSApplicationDelegate {
     }
     private func drawPinnedOutlines() {
         var done = Set<ObjectIdentifier>()
+        Self.dimmedTabButtons = []   // worked out again below, for the buttons there are now
         for tab in tabs {
             guard let group = tab.window?.tabGroup, done.insert(ObjectIdentifier(group)).inserted,
                   let frameView = (group.selectedWindow ?? tab.window)?.contentView?.superview else { continue }
             guard let buttons = Self.tabButtons(in: frameView, for: group.windows) else { continue }
             for (button, window) in zip(buttons, group.windows) {
                 let tab = tabs.first { $0.window === window }
-                button.alphaValue = tab?.isUnloaded == true ? 0.45 : 1   // unloaded: dimmed
+                if tab?.isUnloaded == true { Self.dimmedTabButtons.insert(ObjectIdentifier(button)) }   // unloaded: dimmed
+                button.alphaValue = tab?.isUnloaded == true ? Self.dimmedAlpha : 1
                 let page = tab?.pinned
                 let pinned = page != nil
                 button.wantsLayer = true
@@ -1051,6 +1053,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         method_setImplementation(method, imp_implementationWithBlock(replacement))
         for name in ["NSTabButton", "NSTabSeparator"] { keepFrames(of: name) }
+        keepDimming()
         refuseDraggingPinnedTabs()
         hideCloseButtonOfPinnedTabs()
         hitTestTabsByTheirFrames()
@@ -1119,6 +1122,23 @@ final class App: NSObject, NSApplicationDelegate {
         let original = unsafeBitCast(method_getImplementation(method), to: SetFrame.self)   // own or NSView's
         let replacement: @convention(block) (NSView, NSRect) -> Void = { view, frame in
             original(view, selector, MainActor.assumeIsolated { keptFrame(for: view, proposed: frame) })
+        }
+        let imp = imp_implementationWithBlock(replacement)
+        if !class_addMethod(cls, selector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
+    }
+    // Unloaded tabs are dimmed (alphaValue, in the outline pass), but the tab bar sets every button back to
+    // fully opaque when the pointer moves over it – so NSTabButton's alphaValue setter keeps a button in
+    // `dimmedTabButtons` at no more than the dimmed value
+    static let dimmedAlpha: CGFloat = 0.45
+    static var dimmedTabButtons = Set<ObjectIdentifier>()
+    private static func keepDimming() {
+        let selector = #selector(setter: NSView.alphaValue)
+        guard let cls = NSClassFromString("NSTabButton"), let method = class_getInstanceMethod(cls, selector) else { return }
+        typealias SetAlpha = @convention(c) (NSView, Selector, CGFloat) -> Void
+        let original = unsafeBitCast(method_getImplementation(method), to: SetAlpha.self)   // own or NSView's
+        let replacement: @convention(block) (NSView, CGFloat) -> Void = { view, alpha in
+            let dimmed = MainActor.assumeIsolated { dimmedTabButtons.contains(ObjectIdentifier(view)) }
+            original(view, selector, dimmed ? min(alpha, dimmedAlpha) : alpha)
         }
         let imp = imp_implementationWithBlock(replacement)
         if !class_addMethod(cls, selector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }

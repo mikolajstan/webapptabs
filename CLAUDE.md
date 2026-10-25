@@ -168,7 +168,8 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    Any tab can be unloaded by hand (View → Unload Tab ▸ / Unload Background Tabs; `App.isBackground` = not a
    pinned tab and not the tab its window shows). `Tab.pageURL` is the page also while unloaded (saveSession,
    Recently Closed) – use it instead of `webView.url`; `hasLoaded` false = "not loaded yet". Unloaded tabs are
-   dimmed: NSTabButton `alphaValue` in the outline pass, `Pill.alphaValue` + menu items in `PinnedSwitcher`
+   dimmed: NSTabButton `alphaValue` in the outline pass (the tab bar sets every button back to alpha 1 when
+   the pointer moves over it, so a `setAlphaValue:` override caps buttons in `dimmedTabButtons`), `Pill.alphaValue` + menu items in `PinnedSwitcher`
    (`unloaded` ids); `App.loadStateChanged()` refreshes those and `TabMemoryWindow` (footprint via
    `proc_pid_rusage` `ri_phys_footprint` of `_webProcessIdentifier`).
    **Staying signed in** (issue #8): the reported "session expired in the morning" was **not** a cold-launch
