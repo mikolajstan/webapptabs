@@ -3,6 +3,20 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [1.7] – 2026-10-25
+
+### Changed
+- **Settings window in tabs** (General, Pinned Tabs, Quick Tabs, Loading along the toolbar), instead of one long
+  window. It keeps one size for every tab and reopens on the tab used last.
+  - **Pinned Tabs** and **Quick Tabs**: a list with icon previews, and the selected page's settings next to it
+    as a form with labelled fields (icon with a large preview, name, address, colour, width; a quick tab's
+    group and Load) instead of a table of narrow columns.
+  - **Quick Tabs**: the groups (with their counts) above the quick tabs, with a divider between them; select a
+    group to edit its own settings, drag a quick tab onto a group to move it there.
+  - **General** also has Restore tabs on launch and Mute site (still in the app menu too).
+  - Each section has one short line; an ⓘ next to it shows the full explanation (hover, or click).
+  - Lists are rounded boxes, with rounded square + / − buttons.
+
 ## [1.6] – 2026-10-25
 
 ### Added
@@ -166,6 +180,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.7]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7
 [1.6]: https://github.com/mikolajstan/webapptabs/releases/tag/1.6
 [1.5.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5.1
 [1.5]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5

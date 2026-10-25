@@ -44,8 +44,8 @@ Window → Merge All Windows · ⌘⇧T reopen closed tab · File → Recently C
 - `mailto:` etc. open in their apps. Gmail/Outlook/Messenger redirect-wrapped links are unwrapped by
   Link Router.
 
-**Pinned tabs** (Settings → Pinned tabs) – open first, in order, every time the app starts, with a
-coloured outline (Settings → Outline colour; opacity 0 = none). Each has an **icon** (1–2 letters, an
+**Pinned tabs** (Settings → Pinned Tabs) – open first, in order, every time the app starts, with a
+coloured outline (Settings → General → Default colour, or the page's own; opacity 0 = none). Each has an **icon** (1–2 letters, an
 emoji, an SF Symbol name such as `checklist`, `ticket`, `timer`, or an image: a file path or a web address
 like a site's `https://…/favicon.ico`). Settings → **Pinned tabs show**:
 *Icon only* (36 px tabs, name on hover), *Icon and name, compact* (just as wide as icon + name; the other
@@ -58,14 +58,14 @@ can't be dragged, and anything that moves them (a tab dropped in between, one pu
 snaps back. ⌘1, ⌘2… count them first in every style. New tabs always open after the pinned ones.
 For example: ⏱ Timesheets · `checklist` Tasks · `ticket` Tickets.
 
-**Quick tabs** (Settings → Quick tabs, same list editor) – pages you jump to now and then, shown as buttons
+**Quick tabs** (Settings → Quick Tabs) – pages you jump to now and then, shown as buttons
 at the right end of the toolbar (before Share), tinted with the outline colour. Like pinned tabs they open
 at launch, stay loaded (unless their **Load** says otherwise, below) and are locked (⌘W takes one back to its page), but they never appear in the tab bar
 and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
 to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
-pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: icon, name,
+pinned tab rather than a quick one. **Quick tab groups** (the sidebar of Settings → Quick Tabs: icon, name,
 colour, width, **+** / **−**) are one button each, `Name ▾`, that opens a menu of their quick tabs – it shows the open
-page's icon; choose a quick tab's group in the Group column (a menu) of the quick tabs list. When the window is too narrow,
+page's icon; put a quick tab in a group with its Group menu, or drag it onto the group. When the window is too narrow,
 the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 
 **Loading and memory** – every loaded tab runs its own copy of the site in its own process (Gmail: 1 GB+
@@ -109,15 +109,24 @@ state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload butt
 
 ## Settings (⌘,)
 
-Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.GmailTabs`):
-home page, how pinned tabs show, the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA
-is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
-tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
-Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
-toolbar button's tint; a quick tab's **Load** says when it's loaded (above; the idle time and the login page are set at the top); its **Width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar
-or its button's width in the toolbar (a button too narrow for icon and name shows just the icon). (colour
-picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
-Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
+Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.GmailTabs`), in four tabs
+along the window's toolbar. Every change applies right away; Esc closes the window, which reopens on the tab
+you used last. Each section has one short line; an ⓘ next to it has the full explanation (hover, or click).
+- **General** – home page; the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is
+  the opacity; opacity 0 = no outline); Restore tabs on launch and Mute site (also in the app menu).
+- **Pinned Tabs** – how pinned tabs show (and the separate row's button label), then the list (icon preview +
+  name; **+** adds the page you're on, **−** removes, drag to reorder) and the selected page's settings:
+  icon (with a large preview), name, address, colour and width.
+- **Quick Tabs** – what the buttons and the group menus show; on the left the groups (top) and the quick
+  tabs (below, with their group's name), each with **+** / **−**, and a divider between them that can be
+  dragged. On the right the selected quick tab's settings (as for pinned tabs, plus its group and **Load**),
+  or the selected group's: icon (empty = its open page's icon), name, colour, width. Drag a quick tab onto a
+  group to move it there, or within the list to reorder.
+- **Loading** – unload idle time, reload after sleeping, login page, and a button for Tab Memory.
+
+A page's or group's colour (empty = the default colour) is its outline in the tab bar and its toolbar
+button's tint; its **width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar or its
+button's width in the toolbar (a button too narrow for icon and name shows just the icon).
 
 ## Known limits
 
