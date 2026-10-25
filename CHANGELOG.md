@@ -3,6 +3,19 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## Unreleased
+
+### Changed
+- **Settings window in tabs** (General, Pinned Tabs, Quick Tabs, Loading along the toolbar), instead of one long
+  window. It keeps one size for every tab and reopens on the tab used last.
+  - **Pinned Tabs** and **Quick Tabs**: a list with icon previews, and the selected page's settings next to it
+    as a form with labelled fields (icon with a large preview, name, address, colour, width; a quick tab's
+    group and Load) instead of a table of narrow columns.
+  - **Quick tab groups** are a sidebar: All quick tabs, then each group with its count. Selecting a group shows
+    its quick tabs and its own settings; drag a quick tab onto a group to move it there.
+  - **General** also has Restore tabs on launch and Mute site (still in the app menu too).
+  - Long explanations moved into tooltips; each section has one short line.
+
 ## [1.6] – 2026-10-25
 
 ### Added
