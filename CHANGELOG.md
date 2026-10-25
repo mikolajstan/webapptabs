@@ -3,6 +3,15 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## Unreleased
+
+### Changed
+- View → **Unload Tab ▸** and **Unload Background Tabs** keep the menu open, so you can unload one tab after
+  another; an unloaded tab leaves the list.
+
+### Fixed
+- Esc closes the Tab Memory window.
+
 ## [1.7] – 2026-10-25
 
 ### Changed

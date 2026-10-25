@@ -176,7 +176,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    `App.unloadIdleTabs()` runs every 10 s: `backgroundSince` is set on the first tick a tab isn't its
    window's selected tab, cleared by `didGetSelected`. Test: `_webProcessIdentifier` (KVC) is 0 for no process.
    Any tab can be unloaded by hand (View → Unload Tab ▸ / Unload Background Tabs; `App.isBackground` = not a
-   pinned tab and not the tab its window shows). `Tab.pageURL` is the page also while unloaded (saveSession,
+   pinned tab and not the tab its window shows). Those menu items keep the menu open (user's wish): they are
+   `StayOpenMenuItemView` items – a view gets the click itself instead of the menu closing, but then draws its
+   own title / image / highlight; the item's action stays for keyboard Return (which closes the menu). `Tab.pageURL` is the page also while unloaded (saveSession,
    Recently Closed) – use it instead of `webView.url`; `hasLoaded` false = "not loaded yet". Unloaded tabs are
    dimmed: NSTabButton `alphaValue` in the outline pass (the tab bar sets every button back to alpha 1 when
    the pointer moves over it, so a `setAlphaValue:` override caps buttons in `dimmedTabButtons`), `Pill.alphaValue` + menu items in `PinnedSwitcher`

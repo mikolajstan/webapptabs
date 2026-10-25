@@ -79,8 +79,8 @@ quick tabs list), so rarely used ones don't have to be loaded all the time:
   (Settings, default 10) in the background; its process ends and the memory is freed. Opening it again
   reloads the page where it was (back/forward history kept); things like scroll position are lost.
 
-By hand (View menu): **Unload Background Tabs** and **Unload Tab ▸** free the memory of quick tabs and ordinary
-tabs right away – every tab except the pinned ones and the tab shown in each window. Unloaded tabs are dimmed
+By hand (View menu, which stays open so you can unload one tab after another): **Unload Background Tabs** and
+**Unload Tab ▸** free the memory of quick tabs and ordinary tabs right away – every tab except the pinned ones and the tab shown in each window. Unloaded tabs are dimmed
 (tab bar, toolbar buttons, their menus); opening one loads it again where it was, and it stays in the saved
 session. **Reload All Tabs** (⌘⇧R) reloads every loaded tab. **View → Tab Memory** lists every tab with its
 state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload buttons and the total.
