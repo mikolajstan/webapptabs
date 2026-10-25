@@ -60,7 +60,7 @@ For example: ⏱ Timesheets · `checklist` Tasks · `ticket` Tickets.
 
 **Quick tabs** (Settings → Quick tabs, same list editor) – pages you jump to now and then, shown as buttons
 at the right end of the toolbar (before Share), tinted with the outline colour. Like pinned tabs they open
-at launch, stay loaded (see **Load** below) and are locked (⌘W takes one back to its page), but they never appear in the tab bar
+at launch, stay loaded (unless their **Load** says otherwise, below) and are locked (⌘W takes one back to its page), but they never appear in the tab bar
 and ⌃Tab / ⌃⇧Tab and ⌘1…⌘9 skip them. They count as sitting before the pinned tabs: on a quick tab ⌃Tab goes
 to the first pinned tab and ⌃⇧Tab to the last tab, and closing the last tab next to them selects the first
 pinned tab rather than a quick one. **Quick tab groups** (Settings → Quick tab groups: icon, name,
@@ -68,8 +68,9 @@ colour, width, **+** / **−**) are one button each, `Name ▾`, that opens a me
 page's icon; choose a quick tab's group in the Group column (a menu) of the quick tabs list. When the window is too narrow,
 the toolbar's » menu lists the pinned and quick pages (groups as submenus).
 
-**Load** (a column in both lists) – every loaded pinned / quick tab runs its own copy of the site in its own
-process (Gmail: 1 GB+ each in Activity Monitor), so rarely used ones don't have to be loaded all the time:
+**Loading and memory** – every loaded tab runs its own copy of the site in its own process (Gmail: 1 GB+
+each in Activity Monitor). Pinned tabs are always loaded. Quick tabs have a **Load** setting (a column in the
+quick tabs list), so rarely used ones don't have to be loaded all the time:
 - **Always** (default) – loaded at launch, stays loaded. Only loaded tabs send notifications, so keep the
   ones you need them from (e.g. Gmail's inbox / chat) on Always.
 - **When opened** – the tab and its button are there, but the page loads the first time you open it, then
@@ -77,6 +78,22 @@ process (Gmail: 1 GB+ each in Activity Monitor), so rarely used ones don't have 
 - **Unload idle** – loads when opened, and is unloaded again after **Unload idle tabs after** *n* minutes
   (Settings, default 10) in the background; its process ends and the memory is freed. Opening it again
   reloads the page where it was (back/forward history kept); things like scroll position are lost.
+
+By hand (View menu): **Unload Background Tabs** and **Unload Tab ▸** free the memory of quick tabs and ordinary
+tabs right away – every tab except the pinned ones and the tab shown in each window. Unloaded tabs are dimmed
+(tab bar, toolbar buttons, their menus); opening one loads it again where it was, and it stays in the saved
+session. **Reload All Tabs** (⌘⇧R) reloads every loaded tab. **Window → Tab Memory** lists every tab with its
+state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload buttons and the total.
+
+**Keeping pages signed in**
+- After the Mac (or its screens) slept for an hour or more, every loaded tab is reloaded: pages from before
+  have an expired session, and the next click on them fails with "session expired".
+- When a tab lands on the site's **login page** and you sign in there, the pinned tabs and the quick tabs on
+  Always reload, and that tab goes back to its own pinned page. The login page is recognised by its address
+  (login, sign-in, authentication, sso…, or a sign-in host like accounts.google.com), or set it in Settings →
+  **Login page**.
+- A diagnostics log of launches, quits, sleep / wake, reloads, unloads and login pages is kept in
+  `~/Library/Logs/WebAppTabs/<app>.log` (addresses without their query).
 
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.
@@ -96,7 +113,7 @@ home page, how pinned tabs show, the **default colour** (colour picker, or hex `
 is the opacity), then three lists with draggable dividers between them: pinned tabs, quick tab groups (Name / Colour) and quick
 tabs (Icon / Name / (Group menu) / **Colour** / Address, **+** / **−**, drag to reorder). A page's or group's
 Colour (swatch → colour picker, or hex; empty = the default colour) is its outline in the tab bar and its
-toolbar button's tint; its **Load** says when it's loaded (above; the idle time is set at the top); its **Width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar
+toolbar button's tint; a quick tab's **Load** says when it's loaded (above; the idle time and the login page are set at the top); its **Width** (points, 24–800; empty = automatic) sets the tab's width in the tab bar
 or its button's width in the toolbar (a button too narrow for icon and name shows just the icon). (colour
 picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is the opacity).
 Restore Tabs and Mute Site are in the app menu. Esc closes the Settings window.
