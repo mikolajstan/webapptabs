@@ -181,7 +181,11 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    own title / image / highlight; the item's action stays for keyboard Return (which closes the menu). The
    Unload Tab submenu has `autoenablesItems` off (an item added while the menu is open isn't validated – the
    "No Background Tabs" line stayed clickable) and is refilled by `refreshUnloadMenu()` after Unload Background
-   Tabs (an open submenu isn't refilled by `menuNeedsUpdate`). `Tab.pageURL` is the page also while unloaded (saveSession,
+   Tabs (an open submenu isn't refilled by `menuNeedsUpdate`). Positions measured against real items on
+   macOS 26: title at x 16, or 36 when the section has images (image at 18) – one row without an image must
+   still use 36, or the titles don't line up. Changing an item's enabled state while the menu is open needs
+   `needsDisplay` on its view, else it shows only after hover. Test menus with the real pointer: timers in the
+   default run loop mode (the test log) pause while a menu is open. `Tab.pageURL` is the page also while unloaded (saveSession,
    Recently Closed) – use it instead of `webView.url`; `hasLoaded` false = "not loaded yet". Unloaded tabs are
    dimmed: NSTabButton `alphaValue` in the outline pass (the tab bar sets every button back to alpha 1 when
    the pointer moves over it, so a `setAlphaValue:` override caps buttons in `dimmedTabButtons`), `Pill.alphaValue` + menu items in `PinnedSwitcher`

@@ -1808,6 +1808,7 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     // Clicking one unloads it and takes it off the list, with the menu still open for the next one
     private func fillUnloadMenu(_ menu: NSMenu) {
         menu.removeAllItems()
+        let imageColumn = unloadableTabs.contains { $0.pinned != nil }   // quick tabs have icons: titles line up after them
         for tab in unloadableTabs {
             let title = tab.displayName.count > 60 ? tab.displayName.prefix(59) + "…" : tab.displayName
             let item = NSMenuItem(title: title, action: #selector(unloadTabFromMenu(_:)), keyEquivalent: "")
@@ -1815,12 +1816,13 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
             item.representedObject = tab
             item.image = tab.pinned?.iconImage
             item.toolTip = tab.pageURL?.absoluteString
-            item.view = StayOpenMenuItemView(title: title, image: item.image) { [weak self, weak item, weak menu] in
+            item.view = StayOpenMenuItemView(title: title, image: item.image, imageColumn: imageColumn) { [weak self, weak item, weak menu] in
                 guard let self, let item, let menu else { return }
                 self.unloadTabFromMenu(item)
                 menu.removeItem(item)
                 if menu.items.isEmpty { menu.addItem(Self.noBackgroundTabsItem()) }
-                menu.supermenu?.update()   // Unload Background Tabs: disabled once nothing's left
+                menu.supermenu?.update()   // Unload Background Tabs: disabled once nothing's left…
+                menu.supermenu?.items.forEach { $0.view?.needsDisplay = true }   // …and drawn so right away
             }
             menu.addItem(item)
         }
@@ -2559,13 +2561,17 @@ enum Form {
 final class StayOpenMenuItemView: NSView {
     private let title: String
     private let image: NSImage?
+    private let titleX: CGFloat
     private let onClick: () -> Void
     private static let font = NSFont.menuFont(ofSize: 0)
-    init(title: String, image: NSImage?, onClick: @escaping () -> Void) {
+    // where AppKit draws (measured on macOS 26): a title at 16, or at 36 when the menu section has images
+    // (which then sit at 18); `imageColumn` = this item's section has images
+    init(title: String, image: NSImage?, imageColumn: Bool, onClick: @escaping () -> Void) {
         self.title = title
         self.image = image
+        self.titleX = imageColumn || image != nil ? 36 : 16
         self.onClick = onClick
-        let width = 28 + (image == nil ? 0 : 22) + (title as NSString).size(withAttributes: [.font: Self.font]).width + 24
+        let width = titleX + (title as NSString).size(withAttributes: [.font: Self.font]).width + 24
         super.init(frame: NSRect(x: 0, y: 0, width: ceil(width), height: 24))
         autoresizingMask = .width
     }
@@ -2579,18 +2585,16 @@ final class StayOpenMenuItemView: NSView {
             NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 6, yRadius: 6).fill()
         }
         let color: NSColor = !enabled ? .disabledControlTextColor : highlighted ? .selectedMenuItemTextColor : .controlTextColor
-        var x: CGFloat = 28
         if let image {
             let tinted = NSImage(size: image.size, flipped: false) { rect in
                 image.draw(in: rect)
                 if image.isTemplate { color.set(); rect.fill(using: .sourceAtop) }
                 return true
             }
-            tinted.draw(in: NSRect(x: x, y: (bounds.height - 16) / 2, width: 16, height: 16))
-            x += 22
+            tinted.draw(in: NSRect(x: 18, y: (bounds.height - 16) / 2, width: 16, height: 16))
         }
         let text = NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: color])
-        text.draw(at: NSPoint(x: x, y: (bounds.height - text.size().height) / 2))
+        text.draw(at: NSPoint(x: titleX, y: (bounds.height - text.size().height) / 2))
     }
     override func mouseUp(with event: NSEvent) {
         guard enclosingMenuItem?.isEnabled ?? true, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
@@ -3603,7 +3607,8 @@ func buildMenu() -> NSMenu {
     unloadTab.submenu?.autoenablesItems = false   // fillUnloadMenu sets each item's enabled state
     let unloadBackground = item("Unload Background Tabs", #selector(App.unloadBackgroundTabs(_:)), "")
     // the menu stays open after it (then it's disabled: nothing left to unload)
-    unloadBackground.view = StayOpenMenuItemView(title: unloadBackground.title, image: nil) { [weak unloadBackground] in
+    // its section has images (Enter Full Screen), so its title sits in line with theirs
+    unloadBackground.view = StayOpenMenuItemView(title: unloadBackground.title, image: nil, imageColumn: true) { [weak unloadBackground] in
         App.shared.unloadBackgroundTabs(nil)
         App.shared.refreshUnloadMenu()
         unloadBackground?.menu?.update()
