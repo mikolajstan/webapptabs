@@ -10,7 +10,7 @@ All notable changes to WebAppTabs. Versions match the git tags and the
   memory of quick tabs and ordinary tabs right away; pinned tabs and the tab each window shows stay loaded.
   Opening an unloaded tab loads it again where it was, and unloaded tabs stay in the saved session.
 - **Reload All Tabs** (⌘⇧R): reloads every loaded tab.
-- **Window → Tab Memory**: every tab with its state (loaded / unloaded / not loaded yet) and memory, as
+- **View → Tab Memory**: every tab with its state (loaded / unloaded / not loaded yet) and memory, as
   Activity Monitor shows it, with Unload / Reload buttons and the total.
 - Unloaded tabs are **dimmed** in the tab bar, the toolbar buttons and their menus.
 - **Reload after waking**: after the Mac or its screens slept for 2 hours or more (Settings → **Reload after

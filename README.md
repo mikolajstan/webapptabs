@@ -82,7 +82,7 @@ quick tabs list), so rarely used ones don't have to be loaded all the time:
 By hand (View menu): **Unload Background Tabs** and **Unload Tab ▸** free the memory of quick tabs and ordinary
 tabs right away – every tab except the pinned ones and the tab shown in each window. Unloaded tabs are dimmed
 (tab bar, toolbar buttons, their menus); opening one loads it again where it was, and it stays in the saved
-session. **Reload All Tabs** (⌘⇧R) reloads every loaded tab. **Window → Tab Memory** lists every tab with its
+session. **Reload All Tabs** (⌘⇧R) reloads every loaded tab. **View → Tab Memory** lists every tab with its
 state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload buttons and the total.
 
 **Keeping pages signed in**

@@ -2163,7 +2163,7 @@ final class PinnedSwitcher: NSStackView {
     }
 }
 
-// Window → Tab Memory: every tab with its state and memory (what Activity Monitor shows for its web content
+// View → Tab Memory: every tab with its state and memory (what Activity Monitor shows for its web content
 // process), Unload / Reload, and the total. Refreshed every 2 s while open; double-click a row to go there.
 @MainActor
 final class TabMemoryWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
@@ -3133,9 +3133,9 @@ func buildMenu() -> NSMenu {
     submenu("View", [goHome, item("Reload", #selector(WKWebView.reload(_:)), "r"), reloadAll,
                      item("Back", #selector(WKWebView.goBack(_:)), "["),
                      item("Forward", #selector(WKWebView.goForward(_:)), "]"), .separator(),
-                     unloadTab, unloadBackground])
+                     unloadTab, unloadBackground, memory])
     // AppKit adds "Show Next Tab", "Merge All Windows", etc. here automatically
-    NSApp.windowsMenu = submenu("Window", [item("Minimize", #selector(NSWindow.miniaturize(_:)), "m"), .separator(), memory])
+    NSApp.windowsMenu = submenu("Window", [item("Minimize", #selector(NSWindow.miniaturize(_:)), "m")])
     return main
 }
 
