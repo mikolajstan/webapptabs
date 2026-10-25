@@ -1694,6 +1694,7 @@ final class App: NSObject, NSApplicationDelegate {
         isRestoringOrQuitting = false
         if tabs.isEmpty && pendingURLs.isEmpty { openTab(url: homeURL) }
         saveSession()
+        loadStateChanged()   // each toolbar was drawn while its tab opened, before the later tabs existed
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows { openTab(url: homeURL) }
