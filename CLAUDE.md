@@ -49,11 +49,16 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
 - Settings window: `SettingsWindow` (⌘,, issue #10): a `.preference` toolbar of selectable items switching
   the content between four panes – `GeneralPane` (home, default colour well + hex, Restore Tabs / Mute Site
   checkboxes; the app-menu items get their tick in `validateMenuItem`), `PinnedPane` (style + list + `PageForm`),
-  `QuickPane` (sidebar of "All quick tabs" + groups | the selected group's quick tabs | `PageForm(quick:)` or
-  `GroupForm`; drop a page row on a group = move it there; reordering inside a group moves the page in
-  `quickPages` before the target), `LoadingPane`. One window size for all panes (`settingsWindow` frame
-  autosave) and the last pane (`settingsPane`) are remembered. Building blocks in `enum Form` (grid, hint with
-  the long text as tooltip, list, cell), `ColorField`, `IconField` (live 32 pt preview). The forms stop the
+  `QuickPane` (left: groups list above the quick tabs list in a frame-based NSSplitView, autosave
+  `quickTabsLists`; selecting in one list clears the other; right: `PageForm(quick:)` or `GroupForm`; drop a
+  page row on a group = move it there), `LoadingPane`. The user tried a groups *sidebar* that filtered the
+  quick tabs (option C) and chose this layout instead. One window size for all panes (`settingsWindow` frame
+  autosave) and the last pane (`settingsPane`) are remembered. Building blocks in `enum Form` (grid, hint +
+  `InfoButton` ⓘ with the long text – tooltip and popover; the user wants a visible icon, a plain tooltip on the
+  label went unnoticed; list = table in a rounded `NSBox`: a border on the scroll view's layer didn't draw),
+  `ColorField`, `IconField` (live 32 pt preview). Form views must fill their container's height (pin the
+  bottom too): with only top constraints the form had zero height and the clicks on its lower fields never
+  reached them (user report; a hit-test check in the test app shows it). The forms stop the
   colour panel when they show another page (`ColorPicker.stop`), else it kept editing the previous one.
   Known: clicking another field within ~0.3 s of pressing Return in a form field returns the focus to the
   first one (machine speed only; Tab between fields is fine). Per-page `PinnedPage.color` / group

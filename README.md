@@ -111,17 +111,17 @@ state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload butt
 
 Per app (stored in `UserDefaults` under the app's bundle ID, e.g. `local.webapptabs.GmailTabs`), in four tabs
 along the window's toolbar. Every change applies right away; Esc closes the window, which reopens on the tab
-you used last.
+you used last. Each section has one short line; an ⓘ next to it has the full explanation (hover, or click).
 - **General** – home page; the **default colour** (colour picker, or hex `#RRGGBB` / `#RRGGBBAA` where AA is
   the opacity; opacity 0 = no outline); Restore tabs on launch and Mute site (also in the app menu).
 - **Pinned Tabs** – how pinned tabs show (and the separate row's button label), then the list (icon preview +
   name; **+** adds the page you're on, **−** removes, drag to reorder) and the selected page's settings:
   icon (with a large preview), name, address, colour and width.
-- **Quick Tabs** – what the buttons and the group menus show; a sidebar with **All quick tabs** and the
-  groups (**+** / **−**), the quick tabs of the selected group, and the selected tab's settings (as for
-  pinned tabs, plus its group and **Load**). With a group selected and no tab, the right side edits the
-  group: icon (empty = its open page's icon), name, colour, width. Drag a quick tab onto a group to move it
-  there; a new quick tab goes into the group selected.
+- **Quick Tabs** – what the buttons and the group menus show; on the left the groups (top) and the quick
+  tabs (below, with their group's name), each with **+** / **−**, and a divider between them that can be
+  dragged. On the right the selected quick tab's settings (as for pinned tabs, plus its group and **Load**),
+  or the selected group's: icon (empty = its open page's icon), name, colour, width. Drag a quick tab onto a
+  group to move it there, or within the list to reorder.
 - **Loading** – unload idle time, reload after sleeping, login page, and a button for Tab Memory.
 
 A page's or group's colour (empty = the default colour) is its outline in the tab bar and its toolbar

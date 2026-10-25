@@ -2401,13 +2401,20 @@ enum Form {
         label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         return label
     }
-    // one short line; the full explanation in its tooltip
-    static func hint(_ text: String, more: String? = nil) -> NSTextField {
+    static func hint(_ text: String) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
-        label.toolTip = more
         return label
+    }
+    // one short line, and an ⓘ with the full explanation (tooltip, or a popover on click)
+    static func hint(_ text: String, more: String) -> NSView {
+        let label = hint(text)
+        label.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        let row = NSStackView(views: [label, InfoButton(more)])
+        row.spacing = 4
+        row.alignment = .centerY
+        return row
     }
     static func label(_ text: String) -> NSTextField { NSTextField(labelWithString: text) }
     static func field(width: CGFloat? = nil, placeholder: String? = nil, delegate: NSTextFieldDelegate) -> NSTextField {
@@ -2449,18 +2456,27 @@ enum Form {
         ])
         return root
     }
-    // a single-column list (icon + name rows) in a scroll view
-    static func list(style: NSTableView.Style = .inset) -> (NSScrollView, NSTableView) {
+    // a single-column list (icon + name rows), scrolling, in a rounded box
+    static func list(style: NSTableView.Style = .inset) -> (NSView, NSTableView) {
         let table = NSTableView()
         table.addTableColumn(NSTableColumn(identifier: .init("item")))
         table.headerView = nil
         table.style = style
         table.rowHeight = 26
+        table.backgroundColor = .clear
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        return (scroll, table)
+        scroll.drawsBackground = false
+        let box = NSBox()
+        box.boxType = .custom
+        box.cornerRadius = 9
+        box.borderWidth = 1
+        box.borderColor = .separatorColor
+        box.fillColor = NSColor.labelColor.withAlphaComponent(0.04)
+        box.contentViewMargins = .zero
+        box.contentView = scroll
+        return (box, table)
     }
     static func cell(_ image: NSImage?, _ text: String, detail: String? = nil) -> NSView {
         let icon = NSImageView(image: image ?? NSImage())
@@ -2488,8 +2504,12 @@ enum Form {
         let minus = NSButton(image: NSImage(systemSymbolName: "minus", accessibilityDescription: "Remove")!, target: target, action: remove)
         plus.toolTip = addTip
         minus.toolTip = removeTip
-        for button in [plus, minus] { button.bezelStyle = .smallSquare; button.widthAnchor.constraint(equalToConstant: 26).isActive = true }
-        return row([plus, minus], spacing: 0)
+        for button in [plus, minus] {   // rounded squares
+            button.bezelStyle = .flexiblePush
+            button.widthAnchor.constraint(equalToConstant: 26).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        }
+        return row([plus, minus], spacing: 4)
     }
     static func popup(_ titles: [String], target: AnyObject, action: Selector) -> NSPopUpButton {
         let popup = NSPopUpButton()
@@ -2500,6 +2520,45 @@ enum Form {
     }
     // "10" for whole numbers, "1.5" otherwise
     static func number(_ value: Double) -> String { value == value.rounded() ? String(Int(value)) : String(value) }
+}
+
+// The ⓘ after a hint: hover for the full text as a tooltip, click for it in a popover
+@MainActor
+final class InfoButton: NSButton {
+    private let text: String
+    init(_ text: String) {
+        self.text = text
+        super.init(frame: .zero)
+        image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "More information")
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = .secondaryLabelColor
+        toolTip = text
+        target = self
+        action = #selector(showText)
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    @objc private func showText() {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.preferredMaxLayoutWidth = 300
+        let box = NSView()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+        ])
+        let controller = NSViewController()
+        controller.view = box
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    }
 }
 
 // Colour: swatch (click → colour panel) + "#RRGGBBAA" field + Default; nil = the default colour
@@ -2574,7 +2633,8 @@ final class IconField: NSStackView {
         preview.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.15).cgColor
         preview.widthAnchor.constraint(equalToConstant: 32).isActive = true
         preview.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        setViews([field, preview], in: .leading)
+        setViews([field, preview, InfoButton("1–2 letters, an emoji, an SF Symbol name like checklist, or an image file path / "
+                                             + "web address (e.g. a site's favicon.ico). The preview shows how it looks.")], in: .leading)
         spacing = 10
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -2717,7 +2777,7 @@ final class GroupForm: NSView, NSTextFieldDelegate {
             [Form.label("Name:"), name],
             [Form.label("Colour:"), color],
             [Form.label("Width:"), Form.row([width, Form.hint("points; the group's toolbar button")])],
-            [NSGridCell.emptyContentView, Form.hint("Drag quick tabs onto a group on the left to add them to it.")],
+            [NSGridCell.emptyContentView, Form.hint("Add quick tabs with their Group menu, or drag them onto the group.")],
         ])
         grid.translatesAutoresizingMaskIntoConstraints = false
         addSubview(grid)
@@ -2960,22 +3020,21 @@ final class PinnedPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
-// Settings → Quick Tabs: groups sidebar | the selected group's quick tabs | the selected tab's (or group's) settings
+// Settings → Quick Tabs: on the left the groups (top) and the quick tabs (below), with a divider between them;
+// on the right the selected quick tab's or group's settings
 @MainActor
-final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSplitViewDelegate {
     lazy var view: NSView = build()
     let buttons = NSPopUpButton()
     let menus = NSPopUpButton()
-    let (groupScroll, groupTable) = Form.list(style: .sourceList)
+    let (groupScroll, groupTable) = Form.list()
     let (pageScroll, pageTable) = Form.list()
     let pageForm = PageForm(quick: true)
     let groupForm = GroupForm()
-    private let empty = Form.hint("Select a quick tab, or add one with +")
+    private let empty = Form.hint("Select a group or a quick tab, or add one with +")
     private(set) var pages: [PinnedPage] = []
     private(set) var groups: [QuickGroup] = []
-    // the sidebar's selection: nil = All quick tabs
-    private(set) var groupId: String?
-    private var shown: [PinnedPage] { groupId.map { id in pages.filter { $0.groupId == id } } ?? pages }
+    private var syncing = false   // selecting in one list clears the other
 
     private func build() -> NSView {
         buttons.addItems(withTitles: ButtonLabel.allCases.map(\.title))
@@ -2987,32 +3046,77 @@ final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         for table in [groupTable, pageTable] {
             table.dataSource = self
             table.delegate = self
+            table.registerForDraggedTypes([pageRowType])
         }
-        pageTable.registerForDraggedTypes([pageRowType])
-        groupTable.registerForDraggedTypes([pageRowType])
         pageForm.onChange = { [weak self] page in self?.update(page) }
         groupForm.onChange = { [weak self] group in self?.update(group) }
         let top = Form.row([Form.label("Buttons show:"), buttons, Form.label("  Group menus:"), menus])
-        let intro = Form.hint("Buttons at the right end of the toolbar, for pages you open now and then; not in the tab bar, and ⌃Tab / ⌘1… skip them.",
-                              more: "A group is one toolbar button, \u{201C}Name ⌄\u{201D}, with a menu of its quick tabs. Like pinned tabs, "
-                                + "quick tabs are locked and ⌘W takes one back to its page.")
+        let intro = Form.hint("Buttons at the right end of the toolbar, for pages you open now and then.",
+                              more: "Quick tabs aren't in the tab bar, and ⌃Tab / ⌘1… skip them. Like pinned tabs they're locked "
+                                + "and ⌘W takes one back to its page. A group is one toolbar button, \u{201C}Name ⌄\u{201D}, with a "
+                                + "menu of its quick tabs: put a quick tab in a group with its Group menu, or drag it onto the group.")
         let groupButtons = Form.plusMinus(target: self, add: #selector(addGroup), remove: #selector(removeGroup),
                                           addTip: "Add a group", removeTip: "Remove the selected group (its quick tabs stay, without a group)")
         let pageButtons = Form.plusMinus(target: self, add: #selector(addPage), remove: #selector(removePage),
-                                         addTip: "Add the page you're on (to the selected group)", removeTip: "Remove the selected quick tab")
-        let sidebar = SettingsWindow.column(groupScroll, below: groupButtons, width: 190)
-        let list = SettingsWindow.column(pageScroll, below: pageButtons, width: 180)
+                                         addTip: "Add the page you're on", removeTip: "Remove the selected quick tab")
+        // the two lists, one above the other; the divider between them can be dragged (remembered)
+        let split = NSSplitView()
+        split.isVertical = false
+        split.dividerStyle = .thin
+        split.delegate = self
+        for pane in [Self.listPane("Groups", groupScroll, groupButtons), Self.listPane("Quick tabs", pageScroll, pageButtons)] {
+            pane.translatesAutoresizingMaskIntoConstraints = true   // frames set by the split view
+            pane.autoresizingMask = [.width, .height]
+            split.addSubview(pane)
+        }
+        split.autosaveName = "quickTabsLists"
+        split.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let forms = NSView()
         for view in [pageForm, groupForm, empty] {
             view.translatesAutoresizingMaskIntoConstraints = false
             forms.addSubview(view)
-            NSLayoutConstraint.activate([
+            NSLayoutConstraint.activate([   // the whole height, so every field can be clicked
                 view.topAnchor.constraint(equalTo: forms.topAnchor, constant: view === empty ? 4 : 0),
                 view.leadingAnchor.constraint(equalTo: forms.leadingAnchor),
                 view.trailingAnchor.constraint(equalTo: forms.trailingAnchor),
             ])
+            if view !== empty { view.bottomAnchor.constraint(equalTo: forms.bottomAnchor).isActive = true }
         }
-        return SettingsWindow.columns(top: [top, intro], [sidebar, list], form: forms)
+        return SettingsWindow.columns(top: [top, intro], [split], form: forms)
+    }
+    // a heading, the list taking the spare height, + / − below
+    private static func listPane(_ title: String, _ list: NSView, _ buttons: NSView) -> NSView {
+        let label = Form.label(title)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        let pane = NSStackView(views: [label, list, buttons])
+        pane.orientation = .vertical
+        pane.alignment = .leading
+        pane.spacing = 6
+        pane.distribution = .fill
+        pane.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 8, right: 0)
+        list.widthAnchor.constraint(equalTo: pane.widthAnchor).isActive = true
+        list.setContentHuggingPriority(.init(1), for: .vertical)
+        list.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        return pane
+    }
+    // each list keeps a few rows; resizing the window shares the height in proportion
+    static let minListPane: CGFloat = 130
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+        splitView.subviews[index].frame.minY + Self.minListPane
+    }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt index: Int) -> CGFloat {
+        splitView.subviews[index + 1].frame.maxY - Self.minListPane - splitView.dividerThickness
+    }
+    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        let panes = splitView.subviews, divider = splitView.dividerThickness
+        guard panes.count == 2 else { return splitView.adjustSubviews() }
+        let available = splitView.bounds.height - divider
+        let oldTotal = panes[0].frame.height + panes[1].frame.height
+        let share = oldTotal > 1 ? panes[0].frame.height / oldTotal : 0.35   // first layout: groups ~1/3
+        let top = min(max(Self.minListPane, (available * share).rounded()), max(Self.minListPane, available - Self.minListPane))
+        panes[0].frame = NSRect(x: 0, y: 0, width: splitView.bounds.width, height: top)
+        panes[1].frame = NSRect(x: 0, y: top + divider, width: splitView.bounds.width, height: max(0, available - top))
     }
 
     func reload() {
@@ -3021,21 +3125,33 @@ final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         groups = App.shared.quickGroups
         buttons.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.quickButtonLabel) ?? 0)
         menus.selectItem(at: ButtonLabel.allCases.firstIndex(of: App.shared.groupMenuLabel) ?? 0)
-        if let id = groupId, !groups.contains(where: { $0.id == id }) { groupId = nil }
-        let selected = pageForm.page?.id
+        let page = pageForm.page?.id, group = pageForm.page == nil ? groupForm.group?.id : nil
         groupTable.reloadData()
-        groupTable.selectRowIndexes([groups.firstIndex { $0.id == groupId }.map { $0 + 1 } ?? 0], byExtendingSelection: false)
         pageTable.reloadData()
-        selectPage(shown.firstIndex { $0.id == selected } ?? (shown.isEmpty || groupId != nil ? nil : 0))
+        if let row = groups.firstIndex(where: { $0.id == group }) {
+            select(group: row)
+        } else {
+            select(page: pages.firstIndex { $0.id == page } ?? (pages.isEmpty ? nil : 0))
+        }
     }
-    // the right side: the selected quick tab, else the selected group, else a hint
-    private func selectPage(_ row: Int?) {
+    private func select(page row: Int?) {
+        syncing = true
+        groupTable.deselectAll(nil)
         if let row { pageTable.selectRowIndexes([row], byExtendingSelection: false) } else { pageTable.deselectAll(nil) }
+        syncing = false
         showForm()
     }
+    private func select(group row: Int) {
+        syncing = true
+        pageTable.deselectAll(nil)
+        groupTable.selectRowIndexes([row], byExtendingSelection: false)
+        syncing = false
+        showForm()
+    }
+    // the right side: the selected quick tab, or the selected group, or a hint
     private func showForm() {
-        let page = shown[safe: pageTable.selectedRow]
-        let group = page == nil ? groupId.flatMap { id in groups.first { $0.id == id } } : nil
+        let page = pages[safe: pageTable.selectedRow]
+        let group = page == nil ? groups[safe: groupTable.selectedRow] : nil
         pageForm.show(page, groups: groups)
         pageForm.isHidden = page == nil
         if let group { groupForm.show(group) }
@@ -3044,98 +3160,92 @@ final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     }
     private func savePages() { App.shared.quickPages = pages }
     private func saveGroups() { App.shared.quickGroups = groups }
+    private func refreshRows() {   // group counts and the quick tabs' group names
+        groupTable.reloadData(forRowIndexes: IndexSet(0..<groupTable.numberOfRows), columnIndexes: [0])
+        pageTable.reloadData(forRowIndexes: IndexSet(0..<pageTable.numberOfRows), columnIndexes: [0])
+    }
     private func update(_ page: PinnedPage) {
         guard let index = pages.firstIndex(where: { $0.id == page.id }) else { return }
-        let regrouped = pages[index].groupId != page.groupId
         pages[index] = page
         savePages()
-        groupTable.reloadData(forRowIndexes: IndexSet(0..<groupTable.numberOfRows), columnIndexes: [0])   // counts
-        if regrouped, groupId != nil {
-            pageTable.reloadData()   // it left (or joined) the group shown
-            selectPage(shown.firstIndex { $0.id == page.id })
-        } else if let row = shown.firstIndex(where: { $0.id == page.id }) {
-            pageTable.reloadData(forRowIndexes: [row], columnIndexes: [0])
-        }
+        refreshRows()
     }
     private func update(_ group: QuickGroup) {
         guard let index = groups.firstIndex(where: { $0.id == group.id }) else { return }
         groups[index] = group
         saveGroups()
-        groupTable.reloadData(forRowIndexes: [index + 1], columnIndexes: [0])
+        refreshRows()
     }
     @objc private func labelsChanged(_ popup: NSPopUpButton) {
         let label = ButtonLabel.allCases[popup.indexOfSelectedItem]
         if popup === buttons { App.shared.quickButtonLabel = label } else { App.shared.groupMenuLabel = label }
     }
     @objc private func addPage() {
-        pages.append(pageFromFrontTab(quick: true, groupId: groupId))
+        pages.append(pageFromFrontTab(quick: true))
         savePages()
         pageTable.reloadData()
-        groupTable.reloadData(forRowIndexes: IndexSet(0..<groupTable.numberOfRows), columnIndexes: [0])
-        selectPage(shown.count - 1)
+        refreshRows()
+        select(page: pages.count - 1)
         pageForm.focusName()
     }
     @objc private func removePage() {
-        guard let page = shown[safe: pageTable.selectedRow] else { return NSSound.beep() }
+        guard pages.indices.contains(pageTable.selectedRow) else { return NSSound.beep() }
         let row = pageTable.selectedRow
-        pages.removeAll { $0.id == page.id }
+        pages.remove(at: row)
         savePages()
         pageTable.reloadData()
-        groupTable.reloadData(forRowIndexes: IndexSet(0..<groupTable.numberOfRows), columnIndexes: [0])
-        selectPage(shown.isEmpty ? nil : min(row, shown.count - 1))
+        refreshRows()
+        select(page: pages.isEmpty ? nil : min(row, pages.count - 1))
     }
     @objc private func addGroup() {
-        let group = QuickGroup(name: "Group \(groups.count + 1)")
-        groups.append(group)
+        groups.append(QuickGroup(name: "Group \(groups.count + 1)"))
         saveGroups()
         groupTable.reloadData()
-        groupTable.selectRowIndexes([groups.count], byExtendingSelection: false)   // → shows its settings
+        select(group: groups.count - 1)
         groupForm.focusName()
     }
     @objc private func removeGroup() {
-        guard groupTable.selectedRow > 0, let group = groups[safe: groupTable.selectedRow - 1] else { return NSSound.beep() }
-        groups.remove(at: groupTable.selectedRow - 1)
+        guard let group = groups[safe: groupTable.selectedRow] else { return NSSound.beep() }
+        groups.remove(at: groupTable.selectedRow)
         // its quick tabs stay, as separate buttons
         pages = pages.map { var page = $0; if page.groupId == group.id { page.groupId = nil }; return page }
         savePages()
         saveGroups()
-        groupId = nil
-        reload()
+        groupTable.reloadData()
+        pageTable.reloadData()
+        select(page: nil)
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { tableView === groupTable ? groups.count + 1 : shown.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { tableView === groupTable ? groups.count : pages.count }
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-        if tableView === pageTable { return Form.cell(shown[row].iconImage, shown[row].name) }
-        guard let group = groups[safe: row - 1] else {
-            return Form.cell(NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil), "All quick tabs",
-                             detail: String(pages.count))
+        if tableView === groupTable {
+            let group = groups[row]
+            let image = group.iconImage ?? NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            return Form.cell(image, group.name, detail: String(pages.filter { $0.groupId == group.id }.count))
         }
-        let image = group.iconImage ?? NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
-        return Form.cell(image, group.name, detail: String(pages.filter { $0.groupId == group.id }.count))
+        let page = pages[row]
+        return Form.cell(page.iconImage, page.name, detail: groups.first { $0.id == page.groupId }?.name)
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let table = notification.object as? NSTableView else { return }
-        if table === groupTable {
-            let id = groupTable.selectedRow > 0 ? groups[safe: groupTable.selectedRow - 1]?.id : nil
-            guard id != groupId || pageTable.selectedRow >= 0 else { return showForm() }
-            groupId = id
-            pageTable.reloadData()
-            selectPage(nil)   // the group's own settings
-        } else {
-            showForm()
+        guard !syncing, let table = notification.object as? NSTableView else { return }
+        if table.selectedRow >= 0 {
+            syncing = true
+            (table === groupTable ? pageTable : groupTable).deselectAll(nil)
+            syncing = false
         }
+        showForm()
     }
-    // drag quick tabs to reorder them, or onto a group in the sidebar to put them in it
+    // drag quick tabs to reorder them, or onto a group to put them in it
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         guard tableView === pageTable else { return nil }
         let item = NSPasteboardItem()
-        item.setString(shown[row].id, forType: pageRowType)
+        item.setString(pages[row].id, forType: pageRowType)
         return item
     }
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
         guard info.draggingPasteboard.string(forType: pageRowType) != nil else { return [] }
-        if tableView === groupTable { return operation == .on && row > 0 ? .move : [] }
+        if tableView === groupTable { return operation == .on && groups.indices.contains(row) ? .move : [] }
         if operation == .on { tableView.setDropRow(row, dropOperation: .above) }
         return .move
     }
@@ -3144,23 +3254,16 @@ final class QuickPane: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         guard let id = info.draggingPasteboard.string(forType: pageRowType),
               let from = pages.firstIndex(where: { $0.id == id }) else { return false }
         if tableView === groupTable {
-            guard let group = groups[safe: row - 1] else { return false }
+            guard let group = groups[safe: row] else { return false }
             pages[from].groupId = group.id
-            savePages()
-            pageTable.reloadData()
-            groupTable.reloadData(forRowIndexes: IndexSet(0..<groupTable.numberOfRows), columnIndexes: [0])
-            selectPage(shown.firstIndex { $0.id == id })   // still selected if it's in the list shown
-            return true
+        } else {
+            let page = pages.remove(at: from)
+            pages.insert(page, at: from < row ? row - 1 : row)
         }
-        // reorder: before the page now at `row` of the shown list (or after the last one shown)
-        let page = pages.remove(at: from)
-        let rest = shown
-        let to = rest[safe: row].flatMap { target in pages.firstIndex { $0.id == target.id } }
-            ?? rest.last.flatMap { last in pages.firstIndex { $0.id == last.id }.map { $0 + 1 } } ?? pages.count
-        pages.insert(page, at: to)
         savePages()
         pageTable.reloadData()
-        selectPage(shown.firstIndex { $0.id == page.id })
+        refreshRows()
+        select(page: pages.firstIndex { $0.id == id })
         return true
     }
 }
@@ -3327,7 +3430,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSToolbarDeleg
 
     // Layout helpers for the list panes
     // a list with its + / − below, at a fixed width
-    static func column(_ list: NSScrollView, below: NSView, width: CGFloat) -> NSView {
+    static func column(_ list: NSView, below: NSView, width: CGFloat) -> NSView {
         let column = NSStackView(views: [list, below])
         column.orientation = .vertical
         column.alignment = .leading
@@ -3364,12 +3467,12 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSToolbarDeleg
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             body.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
         ])
-        for view in top where (view as? NSTextField)?.cell?.wraps == true {
+        for view in top {
             view.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -48).isActive = true
         }
         return root
     }
-    static func listAndForm(top: [NSView], list: NSScrollView, below: NSView, form: NSView) -> NSView {
+    static func listAndForm(top: [NSView], list: NSView, below: NSView, form: NSView) -> NSView {
         columns(top: top, [column(list, below: below, width: 220)], form: form)
     }
 }
