@@ -3,6 +3,28 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## [1.6] – 2026-10-25
+
+### Added
+- **Unload by hand** (View menu): **Unload Background Tabs**, and **Unload Tab ▸** for one tab. They free the
+  memory of quick tabs and ordinary tabs right away; pinned tabs and the tab each window shows stay loaded.
+  Opening an unloaded tab loads it again where it was, and unloaded tabs stay in the saved session.
+- **Reload All Tabs** (⌘⇧R): reloads every loaded tab.
+- **View → Tab Memory**: every tab with its state (loaded / unloaded / not loaded yet) and memory, as
+  Activity Monitor shows it, with Unload / Reload buttons and the total.
+- Unloaded tabs are **dimmed** in the tab bar, the toolbar buttons and their menus.
+- **Reload after waking**: after the Mac or its screens slept for 2 hours or more (Settings → **Reload after
+  sleeping**), the pinned tabs and the quick tabs on Always reload. Pages left open overnight had an expired
+  session, and the next action on them failed with "session expired".
+- **Login page detection**: after you sign in on the site's login page, the pinned tabs and the quick tabs on
+  Always reload, and that tab goes back to its pinned page. The login page is recognised by its address, or
+  set in Settings → **Login page**.
+- **Diagnostics log** in `~/Library/Logs/WebAppTabs/<app>.log`: launches, quits, sleep / wake, reloads,
+  unloads and login pages.
+
+### Changed
+- Pinned tabs are always loaded; the **Load** setting is only for quick tabs now.
+
 ## [1.5.1] – 2026-10-24
 
 ### Changed
@@ -144,6 +166,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.6]: https://github.com/mikolajstan/webapptabs/releases/tag/1.6
 [1.5.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5.1
 [1.5]: https://github.com/mikolajstan/webapptabs/releases/tag/1.5
 [1.4]: https://github.com/mikolajstan/webapptabs/releases/tag/1.4

@@ -87,6 +87,8 @@ enum Setting {
     static let legacyGroupColors = "quickGroupColors"   // 1.3 drafts: group name → "#RRGGBBAA" (migrated)
     static let outlineColor = "pinnedOutlineColor"
     static let unloadAfter = "unloadIdleMinutes"     // LoadMode.unloadIdle: minutes in the background
+    static let reloadAfterSleep = "reloadAfterSleepHours"   // always-loaded tabs reload after sleeping this long
+    static let loginPage = "loginPage"               // the site's sign-in address; nil = recognised by its address
     static let pinnedStyle = "pinnedTabStyle"
     static let compactPinned = "compactPinnedTabs"   // older on/off setting, read when pinnedTabStyle isn't set
 }
@@ -234,9 +236,9 @@ struct PinnedPage: Codable, Equatable {
     var tint: NSColor? { color.flatMap(NSColor.init(hex:)) }
     // Its own width in points (tab in the tab bar / toolbar button); nil = automatic
     var width: Double?
-    // When its page is loaded (Settings → Load); nil = always
+    // When its page is loaded (Settings → Load, quick tabs only; pinned tabs are always loaded); nil = always
     var load: LoadMode?
-    var loadMode: LoadMode { load ?? .always }
+    var loadMode: LoadMode { isQuick ? load ?? .always : .always }
 
     var shownIcon: String {
         let text = (icon ?? "").trimmingCharacters(in: .whitespaces)
@@ -317,6 +319,49 @@ func belongsInApp(_ url: URL) -> Bool {
 func isSameDomain(_ url: URL) -> Bool {
     let domain = { (u: URL) in u.host?.lowercased().split(separator: ".").suffix(2).joined(separator: ".") }
     return domain(url) != nil && domain(url) == domain(homeURL)
+}
+
+// The site's sign-in page: Settings → Login page (that address and anything below it), else guessed from the
+// address – a sign-in host (accounts.google.com) or a path part like login, sign-in, authentication, sso
+func isLoginPage(_ url: URL?) -> Bool {
+    guard let url, let host = url.host?.lowercased() else { return false }
+    if let custom = UserDefaults.standard.string(forKey: Setting.loginPage).flatMap(URL.init(string:)) {
+        let path = custom.path.isEmpty ? "/" : custom.path.lowercased()
+        return host == custom.host?.lowercased() && url.path.lowercased().hasPrefix(path)
+    }
+    if ["accounts", "login", "auth", "sso", "signin"].contains(host.split(separator: ".").first.map(String.init) ?? "") {
+        return true
+    }
+    return url.path.lowercased().split(separator: "/").contains {
+        $0.wholeMatch(of: #/(wp-)?(log-?in|sign-?in|authentication|auth|sso)(\.\w+)?/#) != nil
+    }
+}
+
+// What happened when, for working out problems like "the pages show an expired session in the morning":
+// launches, quits, sleep / wake, reloads, unloads, sign-in pages. ~/Library/Logs/WebAppTabs/<app>.log,
+// addresses without their query; trimmed to the newest half when it passes 512 KB.
+enum Diagnostics {
+    static let file: URL = {
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/WebAppTabs/\(name).log")
+    }()
+    static func log(_ message: String) {
+        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.colon).dateTimeSeparator(.space))
+        let line = Data("\(stamp)  \(message)\n".utf8)
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let handle = try? FileHandle(forWritingTo: file) else {
+            try? line.write(to: file)
+            return
+        }
+        defer { try? handle.close() }
+        if let size = try? handle.seekToEnd(), size > 512_000, let data = try? Data(contentsOf: file) {
+            try? data.suffix(256_000).write(to: file)
+            return log(message)
+        }
+        handle.write(line)
+    }
+    // host + path, no query (it can carry tokens)
+    static func address(_ url: URL?) -> String { url.map { ($0.host ?? "") + $0.path } ?? "–" }
 }
 
 final class WebView: WKWebView {
@@ -405,6 +450,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
             unloadedURL = url
             isUnloaded = true
         } else {
+            hasLoaded = true
             applyMute()
             if let url { webView.load(URLRequest(url: url)) }
         }
@@ -451,12 +497,18 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
     // until it loads something, so it takes no memory. Its title and place stay; selecting it loads the
     // page again, back where it was (history included).
     private(set) var isUnloaded = false
+    private(set) var hasLoaded = false   // false: not loaded yet (Load "When opened", never opened)
     private var unloadedURL: URL?
     private var unloadedState: Any?   // WKWebView.interactionState: back/forward list + current page
     var backgroundSince: Date?        // since when it's not the selected tab of its window (idle unloading)
+    // its page, also while unloaded (saved session, Recently Closed, Tab Memory)
+    var pageURL: URL? { isUnloaded ? unloadedURL : webView.url }
+    var displayName: String { pinned?.name ?? window?.title ?? "" }
 
-    func unload() {
+    // reason: for the diagnostics log ("idle", "by hand")
+    func unload(_ reason: String) {
         guard !isUnloaded else { return }
+        Diagnostics.log("unload (\(reason)): \(displayName) – \(Diagnostics.address(webView.url))")
         let old = webView
         unloadedState = old.interactionState
         unloadedURL = old.url ?? pinned.flatMap { URL(string: $0.url) }
@@ -467,10 +519,12 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         observations = []
         attach(WebView(frame: old.frame, configuration: App.shared.makeConfiguration()))
         old.removeFromSuperview()
+        App.shared.loadStateChanged()
     }
     func loadIfNeeded() {
         guard isUnloaded else { return }
         isUnloaded = false
+        hasLoaded = true
         applyMute()
         if let state = unloadedState {
             webView.interactionState = state
@@ -479,13 +533,17 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         }
         unloadedState = nil
         unloadedURL = nil
+        App.shared.loadStateChanged()
     }
     // Loads a page in this tab, also when it's unloaded (⌘W on a pinned tab, a changed address, Home Page)
     func open(_ url: URL) {
+        let wasUnloaded = isUnloaded
+        hasLoaded = true
         isUnloaded = false
         unloadedState = nil
         unloadedURL = nil
         webView.load(URLRequest(url: url))
+        if wasUnloaded { App.shared.loadStateChanged() }
     }
 
     // Besides the JS shim, mute the whole page (every frame) in WebKit itself.
@@ -535,7 +593,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         let group = sender.tabbedWindows ?? []
         let index = group.firstIndex(of: sender) ?? 0
         let left = index > 0 ? App.shared.tabs.first { $0.window === group[index - 1] } : nil
-        closingInfo = (webView.title, left)
+        closingInfo = (isUnloaded ? sender.title : webView.title, left)
         // Like Safari: closing a tab you came to straight from the tab that opened it goes back there.
         // Otherwise AppKit selects the tab to the right (or left, for the last tab), as Safari does.
         // Quick tabs count as sitting before the pinned ones: if AppKit would land on one (closing the last
@@ -666,6 +724,24 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
 
     // Downloads → ~/Downloads. "Content-Disposition: attachment" means save it, even for a PDF or image
     // WebKit could display (sites often load those in a hidden frame, which otherwise does nothing).
+    // Sign-in detection: a page that lands on the site's login page (also via a redirect), then leaves it for
+    // the site again = signed in again → App.didSignIn reloads the always-loaded tabs
+    private var sawLoginPage = false
+    private func noteLoginPage() {
+        guard !sawLoginPage, isLoginPage(webView.url) else { return }
+        sawLoginPage = true
+        Diagnostics.log("login page: \(displayName) – \(Diagnostics.address(webView.url))")
+    }
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        noteLoginPage()
+    }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { noteLoginPage() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard sawLoginPage, let url = webView.url, !isLoginPage(url), isOwnSite(url) || isSameDomain(url) else { return }
+        sawLoginPage = false
+        App.shared.didSignIn(in: self)
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")
@@ -767,11 +843,12 @@ extension Tab: NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate {
     func refreshPinnedSwitcher() {
         let selected = App.shared.selectedTab?.pinned?.id, color = App.shared.outlineColor
         let pinned = App.shared.pinnedPages, quick = App.shared.quickPages
+        let unloaded = Set(App.shared.tabs.filter(\.isUnloaded).compactMap { $0.pinned?.id })
         pinnedSwitcher.update(pages: pinned, selected: pinned.firstIndex { $0.id == selected }, color: color,
                               show: App.shared.pinnedButtonLabel)
         quickSwitcher.update(pages: quick, selected: quick.firstIndex { $0.id == selected }, color: color,
                              groups: App.shared.quickGroups, show: App.shared.quickButtonLabel,
-                             menus: App.shared.groupMenuLabel)
+                             menus: App.shared.groupMenuLabel, unloaded: unloaded)
         // when the window is too narrow the toolbar moves them into its » menu, which uses these
         for item in window?.toolbar?.items ?? [] {
             guard let switcher = item.view as? PinnedSwitcher else { continue }
@@ -892,12 +969,16 @@ final class App: NSObject, NSApplicationDelegate {
     }
     private func drawPinnedOutlines() {
         var done = Set<ObjectIdentifier>()
+        Self.dimmedTabButtons = []   // worked out again below, for the buttons there are now
         for tab in tabs {
             guard let group = tab.window?.tabGroup, done.insert(ObjectIdentifier(group)).inserted,
                   let frameView = (group.selectedWindow ?? tab.window)?.contentView?.superview else { continue }
             guard let buttons = Self.tabButtons(in: frameView, for: group.windows) else { continue }
             for (button, window) in zip(buttons, group.windows) {
-                let page = tabs.first { $0.window === window }?.pinned
+                let tab = tabs.first { $0.window === window }
+                if tab?.isUnloaded == true { Self.dimmedTabButtons.insert(ObjectIdentifier(button)) }   // unloaded: dimmed
+                button.alphaValue = tab?.isUnloaded == true ? Self.dimmedAlpha : 1
+                let page = tab?.pinned
                 let pinned = page != nil
                 button.wantsLayer = true
                 button.layer?.borderColor = (page?.tint ?? outlineColor).cgColor
@@ -972,6 +1053,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         method_setImplementation(method, imp_implementationWithBlock(replacement))
         for name in ["NSTabButton", "NSTabSeparator"] { keepFrames(of: name) }
+        keepDimming()
         refuseDraggingPinnedTabs()
         hideCloseButtonOfPinnedTabs()
         hitTestTabsByTheirFrames()
@@ -1040,6 +1122,23 @@ final class App: NSObject, NSApplicationDelegate {
         let original = unsafeBitCast(method_getImplementation(method), to: SetFrame.self)   // own or NSView's
         let replacement: @convention(block) (NSView, NSRect) -> Void = { view, frame in
             original(view, selector, MainActor.assumeIsolated { keptFrame(for: view, proposed: frame) })
+        }
+        let imp = imp_implementationWithBlock(replacement)
+        if !class_addMethod(cls, selector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
+    }
+    // Unloaded tabs are dimmed (alphaValue, in the outline pass), but the tab bar sets every button back to
+    // fully opaque when the pointer moves over it – so NSTabButton's alphaValue setter keeps a button in
+    // `dimmedTabButtons` at no more than the dimmed value
+    static let dimmedAlpha: CGFloat = 0.45
+    static var dimmedTabButtons = Set<ObjectIdentifier>()
+    private static func keepDimming() {
+        let selector = #selector(setter: NSView.alphaValue)
+        guard let cls = NSClassFromString("NSTabButton"), let method = class_getInstanceMethod(cls, selector) else { return }
+        typealias SetAlpha = @convention(c) (NSView, Selector, CGFloat) -> Void
+        let original = unsafeBitCast(method_getImplementation(method), to: SetAlpha.self)   // own or NSView's
+        let replacement: @convention(block) (NSView, CGFloat) -> Void = { view, alpha in
+            let dimmed = MainActor.assumeIsolated { dimmedTabButtons.contains(ObjectIdentifier(view)) }
+            original(view, selector, dimmed ? min(alpha, dimmedAlpha) : alpha)
         }
         let imp = imp_implementationWithBlock(replacement)
         if !class_addMethod(cls, selector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
@@ -1208,11 +1307,13 @@ final class App: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
             NSLog("notifications granted=\(granted) error=\(String(describing: error))")
         }
+        Diagnostics.log("launch")
         installUserScripts()
         openStartTabs()
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
             MainActor.assumeIsolated { App.shared.unloadIdleTabs() }
         }
+        observeSleep()
         didLaunch = true
         pendingURLs.forEach(openFromOutside)
         pendingURLs = []
@@ -1231,6 +1332,7 @@ final class App: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
     func applicationWillTerminate(_ notification: Notification) {
+        Diagnostics.log("quit")
         saveSession()
         isQuitting = true
         isRestoringOrQuitting = true   // windows closing during quit must not wipe the saved tabs
@@ -1243,6 +1345,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) { SettingsWindow.shared.show() }
+    @objc func showTabMemory(_ sender: Any?) { TabMemoryWindow.show() }
 
     @objc func toggleRestoreTabs(_ item: NSMenuItem) {
         UserDefaults.standard.set(!restoreTabs, forKey: Setting.restoreTabs)
@@ -1270,8 +1373,93 @@ final class App: NSObject, NSApplicationDelegate {
             }
             let since = tab.backgroundSince ?? now
             tab.backgroundSince = since
-            if now.timeIntervalSince(since) >= unloadAfterMinutes * 60 { tab.unload() }
+            if now.timeIntervalSince(since) >= unloadAfterMinutes * 60 { tab.unload("idle") }
         }
+    }
+
+    // Tabs shown dimmed while unloaded (toolbar buttons, their menus, the tab bar), and the Tab Memory list
+    func loadStateChanged() {
+        tabs.forEach { $0.refreshPinnedSwitcher() }
+        outlinePinnedTabs()
+        TabMemoryWindow.shared?.refresh()
+    }
+
+    // View → Unload Background Tabs / Unload Tab ▸: frees a tab's memory now. "Background" = everything except
+    // pinned tabs (always loaded) and the tab each window shows. Opening it again loads it (where it was).
+    func isBackground(_ tab: Tab) -> Bool {
+        guard tab.pinned?.isQuick ?? true, let window = tab.window else { return false }
+        return (window.tabGroup?.selectedWindow ?? window) !== window
+    }
+    var unloadableTabs: [Tab] { tabsInOrder.filter { isBackground($0) && !$0.isUnloaded } }
+    // pinned, quick, then the other tabs as they sit in their windows
+    var tabsInOrder: [Tab] {
+        var ordered = allPinnedPages.compactMap { page in tabs.first { $0.pinned?.id == page.id } }
+        var windows: [NSWindow] = []
+        for tab in tabs { (tab.window?.tabbedWindows ?? tab.window.map { [$0] } ?? []).forEach { w in if !windows.contains(w) { windows.append(w) } } }
+        for window in windows { if let tab = tabs.first(where: { $0.window === window }), !ordered.contains(tab) { ordered.append(tab) } }
+        return ordered + tabs.filter { !ordered.contains($0) }
+    }
+    @objc func unloadBackgroundTabs(_ sender: Any?) { unloadableTabs.forEach { $0.unload("by hand") } }
+    @objc func unloadTabFromMenu(_ item: NSMenuItem) {
+        if let tab = item.representedObject as? Tab, tabs.contains(tab), isBackground(tab) { tab.unload("by hand") }
+    }
+    // View → Reload All Tabs (⌘⇧R): every loaded tab; unloaded ones load fresh when opened anyway
+    @objc func reloadAllTabs(_ sender: Any?) { reloadLoadedTabs("by hand") }
+    func reloadLoadedTabs(_ reason: String) {
+        let loaded = tabs.filter { !$0.isUnloaded }
+        Diagnostics.log("reload \(loaded.count) tabs (\(reason))")
+        loaded.forEach { $0.webView.reload() }
+    }
+
+    // pinned tabs and quick tabs on Always, while loaded: the ones kept signed in (sign-in, waking)
+    var alwaysLoadedTabs: [Tab] { tabs.filter { !$0.isUnloaded && $0.pinned?.loadMode == .always } }
+
+    // Signed in again in `tab` (it had landed on the site's login page): the other always-loaded tabs –
+    // pinned, and quick ones on Always – are signed out or about to fail too, so they're reloaded; the tab
+    // itself goes back to its pinned page (sites send you to their start page after signing in)
+    private var lastSignInReload = Date.distantPast
+    func didSignIn(in tab: Tab) {
+        guard Date().timeIntervalSince(lastSignInReload) > 30 else { return }   // no reload loops
+        lastSignInReload = Date()
+        let others = alwaysLoadedTabs.filter { $0 !== tab }
+        Diagnostics.log("signed in: \(tab.displayName) – reload \(others.count) always-loaded tabs")
+        others.forEach { $0.webView.reload() }
+        if let page = tab.pinned, let url = URL(string: page.url), tab.webView.url != url { tab.open(url) }
+    }
+
+    // After the Mac (or just its screens) slept for a while (Settings, default 2 h), pages loaded before are out
+    // of date: the site's session ran out, and the next click fails with "session expired" without a sign-in
+    // page. So the always-loaded tabs (pinned, quick on Always) reload on waking; other tabs are left alone.
+    var awaySince: Date?
+    var reloadAfterSleepHours: Double {
+        get { UserDefaults.standard.object(forKey: Setting.reloadAfterSleep) as? Double ?? 2 }
+        set { UserDefaults.standard.set(newValue, forKey: Setting.reloadAfterSleep) }
+    }
+    func observeSleep() {
+        let center = NSWorkspace.shared.notificationCenter
+        for (name, label) in [(NSWorkspace.willSleepNotification, "sleep"), (NSWorkspace.screensDidSleepNotification, "screens sleep")] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    Diagnostics.log(label)
+                    if App.shared.awaySince == nil { App.shared.awaySince = Date() }
+                }
+            }
+        }
+        for (name, label) in [(NSWorkspace.didWakeNotification, "wake"), (NSWorkspace.screensDidWakeNotification, "screens wake")] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { App.shared.didWake(label) }
+            }
+        }
+    }
+    func didWake(_ label: String) {
+        guard let since = awaySince else { return Diagnostics.log(label) }
+        awaySince = nil
+        let away = Date().timeIntervalSince(since)
+        Diagnostics.log("\(label) after \(Int(away / 60)) min")
+        guard away >= reloadAfterSleepHours * 3600 else { return }
+        let reloading = alwaysLoadedTabs
+        Diagnostics.log("reload \(reloading.count) always-loaded tabs (after waking)")
+        reloading.forEach { $0.webView.reload() }
     }
 
     // The tab you're on, also while another window (e.g. Settings) is in front
@@ -1482,7 +1670,7 @@ final class App: NSObject, NSApplicationDelegate {
             let group = (window.tabbedWindows ?? [window]).compactMap { w in tabs.first { $0.window === w } }
             group.forEach { if let w = $0.window { seen.insert(ObjectIdentifier(w)) } }
             let pinnedTabs = group.filter { $0.pinned != nil }
-            let pages = group.filter { $0.pinned == nil }.compactMap { t in t.webView.url.map { (tab: t, url: $0.absoluteString) } }
+            let pages = group.filter { $0.pinned == nil }.compactMap { t in t.pageURL.map { (tab: t, url: $0.absoluteString) } }
             let selectedWindow = window.tabGroup?.selectedWindow
             let selected = pages.firstIndex { $0.tab.window === selectedWindow } ?? 0
             let pinnedSelected = pinnedTabs.firstIndex { $0.window === selectedWindow }
@@ -1526,6 +1714,7 @@ final class App: NSObject, NSApplicationDelegate {
         isRestoringOrQuitting = false
         if tabs.isEmpty && pendingURLs.isEmpty { openTab(url: homeURL) }
         saveSession()
+        loadStateChanged()   // each toolbar was drawn while its tab opened, before the later tabs existed
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows { openTab(url: homeURL) }
@@ -1569,7 +1758,7 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
     struct ClosedTab { let url: URL; let title: String; weak var after: Tab? }
 
     func rememberClosed(_ tab: Tab) {
-        guard !isQuitting, let url = tab.webView.url else { return }
+        guard !isQuitting, let url = tab.pageURL else { return }
         let title = (tab.closingInfo?.title ?? tab.webView.title).flatMap { $0.isEmpty ? nil : $0 } ?? url.absoluteString
         closedTabs.append(ClosedTab(url: url, title: title, after: tab.closingInfo?.leftNeighbour))
     }
@@ -1591,6 +1780,7 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
         switch item.action {
         case #selector(reopenClosedTab(_:)): !closedTabs.isEmpty
         case #selector(closeTab(_:)): NSApp.keyWindow != nil
+        case #selector(unloadBackgroundTabs(_:)): !unloadableTabs.isEmpty
         default: true
         }
     }
@@ -1603,8 +1793,23 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
             window?.performClose(sender)
         }
     }
+    // View → Unload Tab ▸: the background tabs that are loaded
+    private func fillUnloadMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        for tab in unloadableTabs {
+            let item = NSMenuItem(title: tab.displayName.count > 60 ? tab.displayName.prefix(59) + "…" : tab.displayName,
+                                  action: #selector(unloadTabFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = tab
+            item.image = tab.pinned?.iconImage
+            item.toolTip = tab.pageURL?.absoluteString
+            menu.addItem(item)
+        }
+        if menu.items.isEmpty { menu.addItem(withTitle: "No Background Tabs", action: nil, keyEquivalent: "") }
+    }
     // File → Recently Closed lists every tab closed this session, newest first
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.title == "Unload Tab" { return fillUnloadMenu(menu) }
         menu.removeAllItems()
         for (index, closed) in closedTabs.enumerated().reversed() {
             let title = closed.title.count > 60 ? closed.title.prefix(59) + "…" : closed.title
@@ -1827,6 +2032,7 @@ final class PinnedSwitcher: NSStackView {
     private var selected: Int?
     private var groups: [QuickGroup] = []
     private var menuLabel = ButtonLabel.iconAndName   // what a group's menu items show
+    private var unloaded: Set<String> = []            // ids of pages whose tab is unloaded: shown dimmed
     // one entry per page, or per group: its pages, at the place of the first of them
     private var entries: [(group: QuickGroup?, indices: [Int])] {
         var entries: [(group: QuickGroup?, indices: [Int])] = []
@@ -1843,8 +2049,9 @@ final class PinnedSwitcher: NSStackView {
 
     // color: the default; a page's own colour, or its group's, wins
     func update(pages: [PinnedPage], selected: Int?, color: NSColor, groups: [QuickGroup] = [],
-                show: ButtonLabel = .iconAndName, menus: ButtonLabel = .iconAndName) {
+                show: ButtonLabel = .iconAndName, menus: ButtonLabel = .iconAndName, unloaded: Set<String> = []) {
         self.pages = pages
+        self.unloaded = unloaded
         self.selected = selected
         self.groups = groups
         self.menuLabel = menus
@@ -1891,6 +2098,8 @@ final class PinnedSwitcher: NSStackView {
                 pill.setAccessibilityLabel(page.name)
                 pill.onPress = { [weak self] in self?.onSelect?(index) }
             }
+            // unloaded (a group: all of its pages) → dimmed
+            pill.alphaValue = entry.indices.allSatisfy { unloaded.contains(pages[$0].id) } ? 0.45 : 1
             pill.label.textColor = isSelected ? .labelColor : .secondaryLabelColor
             pill.chevron.contentTintColor = pill.label.textColor
             pill.setAccessibilityValue(isSelected ? "selected" : nil)
@@ -1914,6 +2123,14 @@ final class PinnedSwitcher: NSStackView {
             item.tag = index
             item.image = show == .name ? nil : pages[index].iconImage
             item.toolTip = show == .icon ? pages[index].name : nil
+            if unloaded.contains(pages[index].id) {   // dimmed, like its button
+                if !item.title.isEmpty {
+                    item.attributedTitle = NSAttributedString(string: item.title, attributes: [
+                        .foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.menuFont(ofSize: 0)])
+                }
+                item.image = item.image.map(Self.dimmed)
+                item.toolTip = (item.toolTip.map { $0 + " – " } ?? "") + "not loaded"
+            }
             item.state = index == selected ? .on : .off
             menu.addItem(item)
         }
@@ -1936,6 +2153,191 @@ final class PinnedSwitcher: NSStackView {
         return menu
     }
     @objc private func picked(_ item: NSMenuItem) { onSelect?(item.tag) }
+    private static func dimmed(_ image: NSImage) -> NSImage {
+        let copy = NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 0.4)
+            return true
+        }
+        copy.isTemplate = image.isTemplate
+        return copy
+    }
+}
+
+// View → Tab Memory: every tab with its state and memory (what Activity Monitor shows for its web content
+// process), Unload / Reload, and the total. Refreshed every 2 s while open; double-click a row to go there.
+@MainActor
+final class TabMemoryWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private(set) static var shared: TabMemoryWindow?
+    static func show() {
+        let controller = shared ?? TabMemoryWindow()
+        shared = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.refresh()
+    }
+
+    private let table = NSTableView()
+    private let total = NSTextField(labelWithString: "")
+    private var rows: [(tab: Tab, memory: UInt64?)] = []
+    private var timer: Timer?
+
+    init() {
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 380),
+                              styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "\(name) – Tab Memory"
+        window.tabbingMode = .disallowed
+        window.minSize = NSSize(width: 640, height: 220)
+        window.setFrameAutosaveName("tabMemory")
+        super.init(window: window)
+        window.delegate = self
+        for (id, title, width) in [("tab", "Tab", 250.0), ("kind", "Kind", 56.0), ("state", "State", 104.0),
+                                   ("memory", "Memory", 76.0), ("actions", "", 150.0)] {
+            let column = NSTableColumn(identifier: .init(id))
+            column.title = title
+            column.width = width
+            if id == "memory" { column.headerCell.alignment = .right }
+            table.addTableColumn(column)
+        }
+        table.dataSource = self
+        table.delegate = self
+        table.rowHeight = 24
+        table.usesAlternatingRowBackgroundColors = true
+        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle   // the Tab column takes the window's width
+        table.doubleAction = #selector(goToTab)
+        table.target = self
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let unloadAll = NSButton(title: "Unload Background Tabs", target: App.shared, action: #selector(App.unloadBackgroundTabs(_:)))
+        let reloadAll = NSButton(title: "Reload All Tabs", target: App.shared, action: #selector(App.reloadAllTabs(_:)))
+        total.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        total.textColor = .secondaryLabelColor
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let bottom = NSStackView(views: [total, spacer, reloadAll, unloadAll])
+        let root = NSView()
+        for view in [scroll, bottom] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            bottom.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 10),
+            bottom.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            bottom.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            bottom.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
+        ])
+        window.contentView = root
+        window.center()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func windowDidBecomeKey(_ notification: Notification) { startTimer() }
+    func windowWillClose(_ notification: Notification) {
+        timer?.invalidate()
+        timer = nil
+    }
+    private func startTimer() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            MainActor.assumeIsolated { TabMemoryWindow.shared?.refresh() }
+        }
+    }
+
+    // Each tab's web content process ID is private API (`_webProcessIdentifier`; 0 = none); its memory is
+    // the process's footprint – Activity Monitor's "Memory" column
+    static func processID(of tab: Tab) -> pid_t? {
+        guard !tab.isUnloaded, tab.webView.responds(to: NSSelectorFromString("_webProcessIdentifier")),
+              let pid = tab.webView.value(forKey: "_webProcessIdentifier") as? pid_t, pid > 0 else { return nil }
+        return pid
+    }
+    static func footprint(of pid: pid_t) -> UInt64? {
+        var info = rusage_info_v4()
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
+        }
+        return result == 0 ? info.ri_phys_footprint : nil
+    }
+    static func format(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+    }
+
+    func refresh() {
+        guard window?.isVisible == true || rows.isEmpty else { return }
+        let selected = table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow].tab : nil
+        var seen = Set<pid_t>(), sum: UInt64 = 0
+        rows = App.shared.tabsInOrder.map { tab in
+            let pid = Self.processID(of: tab)
+            let memory = pid.flatMap(Self.footprint)
+            if let pid, let memory, seen.insert(pid).inserted { sum += memory }   // a process shared by tabs counts once
+            return (tab, memory)
+        }
+        table.reloadData()
+        if let selected, let row = rows.firstIndex(where: { $0.tab === selected }) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        }
+        let loaded = rows.filter { !$0.tab.isUnloaded }.count
+        let app = Self.footprint(of: getpid()).map { " · the app itself: \(Self.format($0))" } ?? ""
+        total.stringValue = "\(loaded) of \(rows.count) tabs loaded: \(Self.format(sum))\(app)"
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
+        let (tab, memory) = rows[row]
+        let shown = tab.window.map { ($0.tabGroup?.selectedWindow ?? $0) === $0 } ?? false
+        switch column?.identifier.rawValue {
+        case "tab":
+            let label = NSTextField(labelWithString: tab.displayName)
+            label.lineBreakMode = .byTruncatingTail
+            label.toolTip = tab.pageURL?.absoluteString
+            let icon = NSImageView(image: tab.pinned?.iconImage ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)!)
+            icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            let cell = NSStackView(views: [icon, label])
+            cell.spacing = 6
+            cell.alphaValue = tab.isUnloaded ? 0.45 : 1
+            return cell
+        case "kind":
+            return NSTextField(labelWithString: tab.pinned.map { $0.isQuick ? "Quick" : "Pinned" } ?? "Tab")
+        case "state":
+            let state = tab.isUnloaded ? (tab.hasLoaded ? "Unloaded" : "Not loaded yet") : shown ? "Loaded, shown" : "Loaded"
+            return NSTextField(labelWithString: state)
+        case "memory":
+            let label = NSTextField(labelWithString: memory.map(Self.format) ?? "–")
+            label.alignment = .right
+            return label
+        default:
+            let unload = NSButton(title: "Unload", target: self, action: #selector(unloadRow(_:)))
+            let reload = NSButton(title: "Reload", target: self, action: #selector(reloadRow(_:)))
+            for button in [unload, reload] {
+                button.controlSize = .small
+                button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+                button.tag = row
+            }
+            unload.isEnabled = App.shared.isBackground(tab) && !tab.isUnloaded
+            unload.toolTip = tab.pinned?.isQuick == false ? "Pinned tabs are always loaded"
+                : shown ? "The tab you're looking at stays loaded" : nil
+            reload.isEnabled = !tab.isUnloaded
+            return NSStackView(views: [unload, reload])
+        }
+    }
+    @objc private func unloadRow(_ sender: NSButton) {
+        guard rows.indices.contains(sender.tag) else { return }
+        let tab = rows[sender.tag].tab
+        if App.shared.tabs.contains(tab), App.shared.isBackground(tab) { tab.unload("by hand") }
+    }
+    @objc private func reloadRow(_ sender: NSButton) {
+        guard rows.indices.contains(sender.tag), !rows[sender.tag].tab.isUnloaded else { return }
+        rows[sender.tag].tab.webView.reload()
+    }
+    @objc private func goToTab() {
+        guard rows.indices.contains(table.clickedRow), let window = rows[table.clickedRow].tab.window else { return }
+        window.tabGroup?.selectedWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
 }
 
 // The shared colour panel, driven by one colour cell at a time (Settings lists). The Default colour well
@@ -2029,8 +2431,8 @@ final class PagesEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         let columns = groups != nil
             ? [("icon", "Icon", 44.0), ("name", "Name", 96.0), ("group", "Group", 92.0), ("color", "Colour", 106.0),
                ("width", "Width", 46.0), ("load", "Load", 106.0), ("url", "Address", 150.0)]
-            : [("icon", "Icon", 44.0), ("name", "Name", 110.0), ("color", "Colour", 106.0), ("width", "Width", 46.0),
-               ("load", "Load", 106.0), ("url", "Address", 200.0)]
+            : [("icon", "Icon", 56.0), ("name", "Name", 110.0), ("color", "Colour", 106.0), ("width", "Width", 52.0),
+               ("url", "Address", 250.0)]
         for (id, title, width) in columns {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -2363,14 +2765,16 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     private let quickButtonsPopup = NSPopUpButton()
     private let groupMenusPopup = NSPopUpButton()
     private let idleField = NSTextField()
+    private let loginField = NSTextField()
+    private let sleepField = NSTextField()
 
     init() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 880),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 960),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "\(name) Settings"
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 560, height: 800)
+        window.minSize = NSSize(width: 560, height: 880)
         super.init(window: window)
         window.delegate = self
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -2417,6 +2821,22 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                                           NSTextField(labelWithString: "minutes in the background"),
                                           Self.hint("tabs whose Load is \u{201C}Unload idle\u{201D}")])
         idleRow.spacing = 8
+        sleepField.alignment = .right
+        sleepField.delegate = self
+        sleepField.toolTip = "Hours (1–48)"
+        sleepField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let sleepRow = NSStackView(views: [NSTextField(labelWithString: "Reload after sleeping:"), sleepField,
+                                           NSTextField(labelWithString: "hours or more"),
+                                           Self.hint("pinned tabs and quick tabs on Always, so their session isn\u{2019}t expired")])
+        sleepRow.spacing = 8
+        loginField.placeholderString = "automatic"
+        loginField.delegate = self
+        loginField.toolTip = "The site's sign-in page. Empty: addresses with login, sign-in, authentication, sso… "
+            + "or a sign-in host like accounts.google.com"
+        loginField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        let loginRow = NSStackView(views: [NSTextField(labelWithString: "Login page:"), loginField,
+                                           Self.hint("after signing in there, pinned tabs and quick tabs on Always reload")])
+        loginRow.spacing = 8
         let styleRow = NSStackView(views: [NSTextField(labelWithString: "Pinned tabs show:"), stylePopup,
                                            NSTextField(labelWithString: "  buttons:"), pinnedButtonsPopup])
         styleRow.spacing = 8
@@ -2438,9 +2858,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                        Self.hint("Open first, in this order, every time the app starts, outlined in their Colour. "
                                  + "Icon: 1–2 letters, an emoji, an SF Symbol name like checklist, or an image file path / "
                                  + "web address (e.g. a site's favicon.ico). They can't be closed "
-                                 + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first. "
-                                 + "Load: every loaded tab takes its own memory – rarely used ones can load only when opened "
-                                 + "(no notifications until then)."),
+                                 + "or dragged – ⌘W takes one back to its page; ⌘1, ⌘2… count them first. They're always loaded."),
                        pinnedEditor.scroll, pinnedEditor.buttons], grow: pinnedEditor.scroll),
             Self.pane([Self.heading("Quick tab groups"),
                        Self.hint("A group is one toolbar button, \u{201C}Name ⌄\u{201D}, that opens a menu of its quick tabs. "
@@ -2449,8 +2867,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
                        groupEditor.scroll, groupEditor.buttons], grow: groupEditor.scroll),
             Self.pane([Self.heading("Quick tabs"),
                        Self.hint("Buttons at the right end of the toolbar, for pages you jump to now and then. Like pinned "
-                                 + "tabs they're locked (⌘W takes one back to its page) and have a Load setting, but they're "
-                                 + "not in the tab bar and ⌃Tab / ⌘1, ⌘2… skip them."),
+                                 + "tabs they're locked (⌘W takes one back to its page), but they're not in the tab bar and "
+                                 + "⌃Tab / ⌘1, ⌘2… skip them. Load: every loaded tab takes its own memory – rarely used ones "
+                                 + "can load only when opened (no notifications while not loaded)."),
                        quickEditor.scroll, Self.row([quickEditor.buttons, NSView(),
                                                      NSTextField(labelWithString: "Buttons:"), quickButtonsPopup,
                                                      NSTextField(labelWithString: "Group menus:"), groupMenusPopup])],
@@ -2467,7 +2886,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         let stack = NSStackView(views: [
             Self.heading("Home page"), homeField,
             Self.hint("Opened by New Tab (⌘T) and View → Home Page (⌘⇧H). Leave empty for \(defaultHomeURL.absoluteString)"),
-            styleRow, outlineRow, idleRow,
+            styleRow, outlineRow, idleRow, sleepRow, loginRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -2582,6 +3001,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
         hexField.stringValue = App.shared.outlineColor.hexString
         homeField.stringValue = UserDefaults.standard.string(forKey: Setting.homeURL) ?? ""
         idleField.stringValue = Self.minutes(App.shared.unloadAfterMinutes)
+        sleepField.stringValue = Self.minutes(App.shared.reloadAfterSleepHours)
+        loginField.stringValue = UserDefaults.standard.string(forKey: Setting.loginPage) ?? ""
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -2614,6 +3035,20 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate, NSTextFieldDel
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
         if field === homeField { return saveHome() }
+        if field === loginField {
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if text.isEmpty { return UserDefaults.standard.removeObject(forKey: Setting.loginPage) }
+            guard let url = webURL(from: text) else { return NSSound.beep() }
+            UserDefaults.standard.set(url.absoluteString, forKey: Setting.loginPage)
+            field.stringValue = url.absoluteString
+            return
+        }
+        if field === sleepField {
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+            if let hours = Double(text) { App.shared.reloadAfterSleepHours = min(48, max(1, (hours * 2).rounded() / 2)) } else { NSSound.beep() }
+            field.stringValue = Self.minutes(App.shared.reloadAfterSleepHours)
+            return
+        }
         if field === idleField {
             let text = field.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
             if let minutes = Double(text) { App.shared.unloadAfterMinutes = min(1440, max(1, minutes.rounded())) } else { NSSound.beep() }
@@ -2688,9 +3123,17 @@ func buildMenu() -> NSMenu {
                      item("Select All", #selector(NSText.selectAll(_:)), "a")])
     let goHome = item("Home Page", #selector(App.goHome(_:)), "H")
     goHome.target = App.shared
-    submenu("View", [goHome, item("Reload", #selector(WKWebView.reload(_:)), "r"),
+    let reloadAll = item("Reload All Tabs", #selector(App.reloadAllTabs(_:)), "R")
+    let unloadTab = NSMenuItem(title: "Unload Tab", action: nil, keyEquivalent: "")
+    unloadTab.submenu = NSMenu(title: "Unload Tab")
+    unloadTab.submenu?.delegate = App.shared
+    let unloadBackground = item("Unload Background Tabs", #selector(App.unloadBackgroundTabs(_:)), "")
+    let memory = item("Tab Memory", #selector(App.showTabMemory(_:)), "")
+    [reloadAll, unloadBackground, memory].forEach { $0.target = App.shared }
+    submenu("View", [goHome, item("Reload", #selector(WKWebView.reload(_:)), "r"), reloadAll,
                      item("Back", #selector(WKWebView.goBack(_:)), "["),
-                     item("Forward", #selector(WKWebView.goForward(_:)), "]")])
+                     item("Forward", #selector(WKWebView.goForward(_:)), "]"), .separator(),
+                     unloadTab, unloadBackground, memory])
     // AppKit adds "Show Next Tab", "Merge All Windows", etc. here automatically
     NSApp.windowsMenu = submenu("Window", [item("Minimize", #selector(NSWindow.miniaturize(_:)), "m")])
     return main

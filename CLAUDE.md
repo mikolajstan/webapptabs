@@ -155,8 +155,9 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    ~/Library/Caches/<bundle id>/icons, then tabs/buttons are redrawn; first letter meanwhile).
    `PinnedPage.normalizedIcon` keeps symbol names and image references whole, cuts other text to 2 chars.
 5. **Mute**: `_setPageMuted:` via method IMP (+ JS shim blocking `play()` / AudioContext).
-6. **Load modes** (`PinnedPage.load`: `LoadMode` always / whenOpened / unloadIdle; Settings → Load column,
-   `unloadIdleMinutes`). A deferred tab (`Tab(deferred:)`, set by `openTab` for non-always pinned pages) and
+6. **Load modes** (`PinnedPage.load`: `LoadMode` always / whenOpened / unloadIdle; quick tabs only – `loadMode`
+   is always `.always` for pinned ones; Settings → Load column, `unloadIdleMinutes`). A deferred tab
+   (`Tab(deferred:)`, set by `openTab` for non-always quick pages) and
    an unloaded one hold a **fresh, never-loaded WebView**: WebKit starts no WebContent process until the first
    load, so it costs nothing. `Tab.webView` is therefore a `var` – `attach(_:)` wires a web view up (delegates,
    KVO, contentView, ‹ › toolbar targets); never keep a reference to a tab's web view. `unload()` saves
@@ -164,6 +165,23 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    `loadIfNeeded()` runs from the selection KVO handler; `open(_:)` loads a URL and clears the unloaded state.
    `App.unloadIdleTabs()` runs every 10 s: `backgroundSince` is set on the first tick a tab isn't its
    window's selected tab, cleared by `didGetSelected`. Test: `_webProcessIdentifier` (KVC) is 0 for no process.
+   Any tab can be unloaded by hand (View → Unload Tab ▸ / Unload Background Tabs; `App.isBackground` = not a
+   pinned tab and not the tab its window shows). `Tab.pageURL` is the page also while unloaded (saveSession,
+   Recently Closed) – use it instead of `webView.url`; `hasLoaded` false = "not loaded yet". Unloaded tabs are
+   dimmed: NSTabButton `alphaValue` in the outline pass (the tab bar sets every button back to alpha 1 when
+   the pointer moves over it, so a `setAlphaValue:` override caps buttons in `dimmedTabButtons`), `Pill.alphaValue` + menu items in `PinnedSwitcher`
+   (`unloaded` ids); `App.loadStateChanged()` refreshes those and `TabMemoryWindow` (footprint via
+   `proc_pid_rusage` `ri_phys_footprint` of `_webProcessIdentifier`).
+   **Staying signed in** (issue #8): the reported "session expired in the morning" was **not** a cold-launch
+   problem – tested with only the remember-me cookie, 3 tabs loading at once all signed in fine. It's pages
+   left open while the Mac sleeps: the session expires server-side and the next AJAX action fails, with no
+   redirect. So `observeSleep()` reloads `alwaysLoadedTabs` (loaded pinned + quick on Always – user's choice;
+   ordinary tabs are left alone) after system or screen sleep ≥ `reloadAfterSleepHours` (Settings, default 2)
+   (`awaySince`, `didWake`). Login pages: `isLoginPage` (Settings → Login page prefix, else a heuristic);
+   `Tab` notes one on server redirect / commit and, when a later `didFinish` is on the site but not the login
+   page, calls `App.didSignIn` → reloads the loaded always-loaded tabs (pinned + quick on Always), the tab
+   goes back to its pinned URL; at most every 30 s. `Diagnostics.log` writes
+   `~/Library/Logs/WebAppTabs/<app>.log` – read it when the user reports session / loading problems.
 7. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
    Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
    repeat of the same tag + title + body within 10 s (`recentNotifications`) and identifies a tagged one by
