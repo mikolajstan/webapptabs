@@ -1805,18 +1805,41 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
         }
     }
     // View → Unload Tab ▸: the background tabs that are loaded
+    // Clicking one unloads it and takes it off the list, with the menu still open for the next one
     private func fillUnloadMenu(_ menu: NSMenu) {
         menu.removeAllItems()
+        let imageColumn = unloadableTabs.contains { $0.pinned != nil }   // quick tabs have icons: titles line up after them
         for tab in unloadableTabs {
-            let item = NSMenuItem(title: tab.displayName.count > 60 ? tab.displayName.prefix(59) + "…" : tab.displayName,
-                                  action: #selector(unloadTabFromMenu(_:)), keyEquivalent: "")
-            item.target = self
+            let title = tab.displayName.count > 60 ? tab.displayName.prefix(59) + "…" : tab.displayName
+            let item = NSMenuItem(title: title, action: #selector(unloadTabFromMenu(_:)), keyEquivalent: "")
+            item.target = self   // the action is for the keyboard (Return), which closes the menu as usual
             item.representedObject = tab
             item.image = tab.pinned?.iconImage
             item.toolTip = tab.pageURL?.absoluteString
+            item.view = StayOpenMenuItemView(title: title, image: item.image, imageColumn: imageColumn) { [weak self, weak item, weak menu] in
+                guard let self, let item, let menu else { return }
+                self.unloadTabFromMenu(item)
+                menu.removeItem(item)
+                if menu.items.isEmpty { menu.addItem(Self.noBackgroundTabsItem()) }
+                menu.supermenu?.update()   // Unload Background Tabs: disabled once nothing's left…
+                menu.supermenu?.items.forEach { $0.view?.needsDisplay = true }   // …and drawn so right away
+            }
             menu.addItem(item)
         }
-        if menu.items.isEmpty { menu.addItem(withTitle: "No Background Tabs", action: nil, keyEquivalent: "") }
+        if menu.items.isEmpty { menu.addItem(Self.noBackgroundTabsItem()) }
+    }
+    // the submenu sets its items' enabled state itself (autoenablesItems off): an item added while the menu
+    // is open isn't validated, so this one stayed clickable
+    private static func noBackgroundTabsItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "No Background Tabs", action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+    // after Unload Background Tabs, with the menu still open: the list is empty now
+    func refreshUnloadMenu() {
+        let view = NSApp.mainMenu?.items.first { $0.submenu?.title == "View" }?.submenu
+        guard let menu = view?.items.first(where: { $0.submenu?.title == "Unload Tab" })?.submenu else { return }
+        fillUnloadMenu(menu)
     }
     // File → Recently Closed lists every tab closed this session, newest first
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -2244,6 +2267,15 @@ final class TabMemoryWindow: NSWindowController, NSWindowDelegate, NSTableViewDa
         ])
         window.contentView = root
         window.center()
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let isEscape = event.keyCode == 53, windowNumber = event.windowNumber
+            let handled = isEscape && MainActor.assumeIsolated {
+                guard let window = self?.window, window.windowNumber == windowNumber else { return false }
+                window.performClose(nil)   // Esc, as in Settings
+                return true
+            }
+            return handled ? nil : event
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -2520,6 +2552,55 @@ enum Form {
     }
     // "10" for whole numbers, "1.5" otherwise
     static func number(_ value: Double) -> String { value == value.rounded() ? String(Int(value)) : String(value) }
+}
+
+// A menu item that does its action without closing the menu (View → Unload Tab ▸ / Unload Background Tabs, so
+// you can unload one tab after another). A standard item always closes the menu when clicked; an item with a
+// view gets the clicks itself, but then has to draw its title, image and highlight too.
+@MainActor
+final class StayOpenMenuItemView: NSView {
+    private let title: String
+    private let image: NSImage?
+    private let titleX: CGFloat
+    private let onClick: () -> Void
+    private static let font = NSFont.menuFont(ofSize: 0)
+    // where AppKit draws (measured on macOS 26): a title at 16, or at 36 when the menu section has images
+    // (which then sit at 18); `imageColumn` = this item's section has images
+    init(title: String, image: NSImage?, imageColumn: Bool, onClick: @escaping () -> Void) {
+        self.title = title
+        self.image = image
+        self.titleX = imageColumn || image != nil ? 36 : 16
+        self.onClick = onClick
+        let width = titleX + (title as NSString).size(withAttributes: [.font: Self.font]).width + 24
+        super.init(frame: NSRect(x: 0, y: 0, width: ceil(width), height: 24))
+        autoresizingMask = .width
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        let item = enclosingMenuItem
+        let enabled = item?.isEnabled ?? true
+        let highlighted = enabled && item?.isHighlighted == true
+        if highlighted {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
+        let color: NSColor = !enabled ? .disabledControlTextColor : highlighted ? .selectedMenuItemTextColor : .controlTextColor
+        if let image {
+            let tinted = NSImage(size: image.size, flipped: false) { rect in
+                image.draw(in: rect)
+                if image.isTemplate { color.set(); rect.fill(using: .sourceAtop) }
+                return true
+            }
+            tinted.draw(in: NSRect(x: 18, y: (bounds.height - 16) / 2, width: 16, height: 16))
+        }
+        let text = NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: color])
+        text.draw(at: NSPoint(x: titleX, y: (bounds.height - text.size().height) / 2))
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard enclosingMenuItem?.isEnabled ?? true, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick()
+        needsDisplay = true
+    }
 }
 
 // The ⓘ after a hint: hover for the full text as a tooltip, click for it in a popover
@@ -3523,7 +3604,15 @@ func buildMenu() -> NSMenu {
     let unloadTab = NSMenuItem(title: "Unload Tab", action: nil, keyEquivalent: "")
     unloadTab.submenu = NSMenu(title: "Unload Tab")
     unloadTab.submenu?.delegate = App.shared
+    unloadTab.submenu?.autoenablesItems = false   // fillUnloadMenu sets each item's enabled state
     let unloadBackground = item("Unload Background Tabs", #selector(App.unloadBackgroundTabs(_:)), "")
+    // the menu stays open after it (then it's disabled: nothing left to unload)
+    // its section has images (Enter Full Screen), so its title sits in line with theirs
+    unloadBackground.view = StayOpenMenuItemView(title: unloadBackground.title, image: nil, imageColumn: true) { [weak unloadBackground] in
+        App.shared.unloadBackgroundTabs(nil)
+        App.shared.refreshUnloadMenu()
+        unloadBackground?.menu?.update()
+    }
     let memory = item("Tab Memory", #selector(App.showTabMemory(_:)), "")
     [reloadAll, unloadBackground, memory].forEach { $0.target = App.shared }
     submenu("View", [goHome, item("Reload", #selector(WKWebView.reload(_:)), "r"), reloadAll,
