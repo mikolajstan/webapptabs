@@ -1819,12 +1819,25 @@ extension App: NSMenuItemValidation, NSMenuDelegate {
                 guard let self, let item, let menu else { return }
                 self.unloadTabFromMenu(item)
                 menu.removeItem(item)
-                if menu.items.isEmpty { menu.addItem(withTitle: "No Background Tabs", action: nil, keyEquivalent: "") }
+                if menu.items.isEmpty { menu.addItem(Self.noBackgroundTabsItem()) }
                 menu.supermenu?.update()   // Unload Background Tabs: disabled once nothing's left
             }
             menu.addItem(item)
         }
-        if menu.items.isEmpty { menu.addItem(withTitle: "No Background Tabs", action: nil, keyEquivalent: "") }
+        if menu.items.isEmpty { menu.addItem(Self.noBackgroundTabsItem()) }
+    }
+    // the submenu sets its items' enabled state itself (autoenablesItems off): an item added while the menu
+    // is open isn't validated, so this one stayed clickable
+    private static func noBackgroundTabsItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "No Background Tabs", action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+    // after Unload Background Tabs, with the menu still open: the list is empty now
+    func refreshUnloadMenu() {
+        let view = NSApp.mainMenu?.items.first { $0.submenu?.title == "View" }?.submenu
+        guard let menu = view?.items.first(where: { $0.submenu?.title == "Unload Tab" })?.submenu else { return }
+        fillUnloadMenu(menu)
     }
     // File → Recently Closed lists every tab closed this session, newest first
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -3587,10 +3600,12 @@ func buildMenu() -> NSMenu {
     let unloadTab = NSMenuItem(title: "Unload Tab", action: nil, keyEquivalent: "")
     unloadTab.submenu = NSMenu(title: "Unload Tab")
     unloadTab.submenu?.delegate = App.shared
+    unloadTab.submenu?.autoenablesItems = false   // fillUnloadMenu sets each item's enabled state
     let unloadBackground = item("Unload Background Tabs", #selector(App.unloadBackgroundTabs(_:)), "")
     // the menu stays open after it (then it's disabled: nothing left to unload)
     unloadBackground.view = StayOpenMenuItemView(title: unloadBackground.title, image: nil) { [weak unloadBackground] in
         App.shared.unloadBackgroundTabs(nil)
+        App.shared.refreshUnloadMenu()
         unloadBackground?.menu?.update()
     }
     let memory = item("Tab Memory", #selector(App.showTabMemory(_:)), "")
