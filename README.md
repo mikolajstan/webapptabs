@@ -93,8 +93,11 @@ state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload butt
   Always reload, and that tab goes back to its own pinned page. The login page is recognised by its address
   (login, sign-in, authentication, sso…, or a sign-in host like accounts.google.com), or set it in Settings →
   **Login page**.
+- At launch the first tab loads on its own and the others right after it (at most 8 s later), so they share
+  the session and security token the site hands out. Loading all at once, each tab could get its own token,
+  and all but one then failed their background requests (e.g. a table that never loaded).
 - A diagnostics log of launches, quits, sleep / wake, reloads, unloads and login pages is kept in
-  `~/Library/Logs/WebAppTabs/<app>.log` (addresses without their query).
+  `~/Library/Logs/WebAppTabs/<app>.log` (local time; addresses without their query).
 
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.

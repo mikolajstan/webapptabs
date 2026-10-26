@@ -3,6 +3,15 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## Unreleased
+
+### Fixed
+- **Tables stuck loading after launch** (e.g. Tickets and Timesheets on a site whose security token had expired
+  overnight): all tabs loaded at once and each got its own new token from the site, so all but one had their
+  background requests refused until reloaded. Now the first tab loads on its own and the others right after it
+  (at most 8 s later), sharing its session and token.
+- The diagnostics log uses local time (it was UTC).
+
 ## [1.7.1] – 2026-10-25
 
 ### Changed
