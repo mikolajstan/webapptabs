@@ -10,7 +10,7 @@ the code: how it fits together, decisions already made, and traps already hit.
 |---|---|
 | `main.swift` (~2650 lines) | the whole Tabs app (AppKit + WKWebView, no Xcode project) |
 | `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app (`Manifest:start_url`, `ApplicationIcon.icns`) or a Chrome one (`~/Applications/Chrome Apps.localized/*.app`: `CrAppModeShortcutURL`, its `CFBundleIconFile` = `app.icns`), or `--all` rebuilds every Tabs app |
-| `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to Safari |
+| `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to the chosen browser (Safari by default) |
 | `tools/test.sh`, `tools/harness.py` | scripted tests in a throwaway app (see Testing) |
 | `tools/crop.swift` | crop + enlarge a screenshot region (tab bar inspection) |
 | `CHANGELOG.md` | changes per version (= git tag / GitHub release); add an entry with every release |
@@ -87,7 +87,12 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
   `elementFromPoint` → link href) → background tab.
 - Link Router (`router/main.swift`): host → app map built from `~/Applications/*.app` with bundle ID prefix
   `local.webapptabs.` (Info.plist `WebAppURL`, or the app's `homeURL` setting). Unwraps redirect links whose
-  query contains a Tabs-app URL (`google.com/url?q=…`). Everything else → Safari.
+  query contains a Tabs-app URL (`google.com/url?q=…`). Everything else → the browser in `fallbackBrowser`
+  (`local.linkrouter` defaults, bundle ID; Safari if unset or uninstalled), chosen in its window: started by
+  itself (no link within 0.5 s of launch) or reopened, it shows "Open other links in:" (every app that opens
+  https, minus Link Router and Tabs apps) and the host → Tabs app list. `LinkRouter --resolve <url>…` prints
+  where links would go without opening them – use it to test. Computer use can't find Link Router (no Dock
+  icon, not indexed): screenshot its window with `screencapture -l <CGWindowID>`, drive it with System Events.
 
 ## Private / undocumented macOS bits (each degrades gracefully)
 

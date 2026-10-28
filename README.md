@@ -23,9 +23,23 @@ Installed apps (in `~/Applications`, pinned to the Dock):
 # after changing main.swift: rebuild every Tabs app (running ones are restarted, tabs come back)
 ./make-app.sh --all
 
-# Link Router (after changing router/main.swift)
+# Link Router → ~/Applications/Link Router.app (once per Mac, and again after changing router/main.swift,
+# then `pkill -x LinkRouter` so the new one starts with the next link)
 router/build.sh
 ```
+
+**Link Router** sends each link to the Tabs app for its site, and every other link to a browser of your choice.
+To set it up:
+1. Build it: `router/build.sh` (needs the command-line tools: `xcode-select --install`).
+2. Make it the default browser: **System Settings → Desktop & Dock → Default web browser → Link Router**
+   (confirm if macOS asks).
+3. Choose the browser for all other links: open **Link Router** yourself (Finder → Applications, or
+   Spotlight). Its window has **Open other links in:** – any installed browser (Safari by default) – and
+   lists the Tabs apps it sends links to.
+
+New Tabs apps are picked up by themselves (it looks in `~/Applications` for every link), so it never needs
+rebuilding for them. To check where a link would go without opening it:
+`~/Applications/Link\ Router.app/Contents/MacOS/LinkRouter --resolve https://example.com`
 
 No Xcode project: `swiftc` compiles `main.swift` into one binary; `make-app.sh` wraps it in an `.app`
 bundle whose `Info.plist` carries the site (`WebAppURL`), then ad-hoc signs and registers it.
