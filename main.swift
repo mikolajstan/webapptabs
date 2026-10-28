@@ -340,13 +340,14 @@ func isLoginPage(_ url: URL?) -> Bool {
 // What happened when, for working out problems like "the pages show an expired session in the morning":
 // launches, quits, sleep / wake, reloads, unloads, sign-in pages. ~/Library/Logs/WebAppTabs/<app>.log,
 // addresses without their query; trimmed to the newest half when it passes 512 KB.
+@MainActor
 enum Diagnostics {
     static let file: URL = {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WebAppTabs"
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/WebAppTabs/\(name).log")
     }()
     static func log(_ message: String) {
-        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.colon).dateTimeSeparator(.space))
+        let stamp = stampFormat.string(from: Date())
         let line = Data("\(stamp)  \(message)\n".utf8)
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let handle = try? FileHandle(forWritingTo: file) else {
@@ -360,6 +361,13 @@ enum Diagnostics {
         }
         handle.write(line)
     }
+    // local time (ISO 8601 was UTC, an hour or two off the user's clock)
+    private static let stampFormat: DateFormatter = {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return format
+    }()
     // host + path, no query (it can carry tokens)
     static func address(_ url: URL?) -> String { url.map { ($0.host ?? "") + $0.path } ?? "–" }
 }
@@ -501,8 +509,19 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
     private var unloadedURL: URL?
     private var unloadedState: Any?   // WKWebView.interactionState: back/forward list + current page
     var backgroundSince: Date?        // since when it's not the selected tab of its window (idle unloading)
-    // its page, also while unloaded (saved session, Recently Closed, Tab Memory)
-    var pageURL: URL? { isUnloaded ? unloadedURL : webView.url }
+    // its page, also while unloaded or waiting to load at launch (saved session, Recently Closed, Tab Memory)
+    var pageURL: URL? { isUnloaded ? unloadedURL : webView.url ?? heldURL }
+    // Launch order (App.openStartTabs): a tab waiting for the first one to finish loading
+    private var heldURL: URL?
+    func holdLoad(_ url: URL) {
+        heldURL = url
+        if window?.title.isEmpty == true { window?.title = url.host ?? "" }
+    }
+    func loadHeld() {
+        guard let url = heldURL else { return }   // nil: something else loaded it meanwhile
+        heldURL = nil
+        webView.load(URLRequest(url: url))
+    }
     var displayName: String { pinned?.name ?? window?.title ?? "" }
 
     // reason: for the diagnostics log ("idle", "by hand")
@@ -542,6 +561,7 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         isUnloaded = false
         unloadedState = nil
         unloadedURL = nil
+        heldURL = nil
         webView.load(URLRequest(url: url))
         if wasUnloaded { App.shared.loadStateChanged() }
     }
@@ -736,7 +756,14 @@ final class Tab: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKU
         noteLoginPage()
     }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { noteLoginPage() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        App.shared.tabFinishedLoading(self)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        App.shared.tabFinishedLoading(self)
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        App.shared.tabFinishedLoading(self)
         guard sawLoginPage, let url = webView.url, !isLoginPage(url), isOwnSite(url) || isSameDomain(url) else { return }
         sawLoginPage = false
         App.shared.didSignIn(in: self)
@@ -1271,7 +1298,14 @@ final class App: NSObject, NSApplicationDelegate {
         isOpeningInBackground = inBackground
         defer { isOpeningTab = false; isOpeningInBackground = false }
         let deferred = (pinned?.loadMode ?? .always) != .always
-        let tab = Tab(load: url, configuration: configuration ?? makeConfiguration(), deferred: deferred)
+        let hold = holdingLoads && firstLaunchTab != nil && url != nil && !deferred
+        let tab = Tab(load: hold ? nil : url, configuration: configuration ?? makeConfiguration(), deferred: deferred)
+        if hold, let url {
+            tab.holdLoad(url)
+            heldLoads.append(tab)
+        } else if holdingLoads, firstLaunchTab == nil, url != nil, !deferred {
+            firstLaunchTab = tab
+        }
         tab.opener = opener
         tab.pinned = pinned
         if deferred, let pinned { tab.window?.title = pinned.name }   // until it loads (Window menu)
@@ -1693,7 +1727,27 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     // On launch: the pinned tabs, then (if Restore Tabs is on) the other tabs from last time, or the home page
+    // Launch order: the first tab loads on its own, the others once it has finished (at most 8 s later). When
+    // they all loaded at once after the site's token cookie had expired (overnight), each got its own new CSRF
+    // token, only the last one stayed in the cookies, and the other tabs' background requests were refused –
+    // their tables stuck loading until reloaded (user report). After the first tab they share its cookies.
+    private var holdingLoads = false
+    private var heldLoads: [Tab] = []
+    private weak var firstLaunchTab: Tab?
+    func tabFinishedLoading(_ tab: Tab) {
+        if holdingLoads, tab === firstLaunchTab { releaseHeldLoads("loaded") }
+    }
+    private func releaseHeldLoads(_ reason: String) {
+        guard holdingLoads else { return }
+        holdingLoads = false
+        if !heldLoads.isEmpty { Diagnostics.log("launch: first tab \(reason), loading \(heldLoads.count) more") }
+        heldLoads.forEach { $0.loadHeld() }
+        heldLoads = []
+    }
+
     func openStartTabs() {
+        holdingLoads = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self.releaseHeldLoads("took over 8 s") }
         isRestoringOrQuitting = true
         var pinnedTabs: [Tab] = []
         for page in allPinnedPages {
@@ -1722,6 +1776,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         isRestoringOrQuitting = false
         if tabs.isEmpty && pendingURLs.isEmpty { openTab(url: homeURL) }
+        if firstLaunchTab == nil { releaseHeldLoads("none") }   // nothing loading: nothing to wait for
         saveSession()
         loadStateChanged()   // each toolbar was drawn while its tab opened, before the later tabs existed
     }

@@ -2,9 +2,12 @@
 # usage:
 #   ./make-app.sh ~/Applications/Gmail.app [name]   new Tabs app from a Safari web app (copies its URL and icon)
 #                                                   → ~/Applications/Gmail Tabs.app
+#   ./make-app.sh ~/Applications/Chrome\ Apps.localized/YouTube.app [name]
+#                                                   the same from a Chrome web app (Chrome → Cast, Save and Share
+#                                                   → Install Page as App / Create Shortcut)
 #   ./make-app.sh --all                             rebuild every Tabs app after changing main.swift
 #                                                   (running ones are restarted; their tabs are restored)
-# The Safari web app is only needed for the first build; --all reads everything from the Tabs apps.
+# The Safari / Chrome web app is only needed for the first build; --all reads everything from the Tabs apps.
 set -euo pipefail
 cd "$(dirname "$0")"
 plist() { /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null }
@@ -53,7 +56,17 @@ if [[ ${1:-} == --all ]]; then
     build_app "$(plist "$APP" CFBundleName)" "$(plist "$APP" WebAppURL)" ""
   done
 else
-  SRC=${1:?path to a Safari web app, or --all}
+  SRC=${1:?path to a Safari or Chrome web app, or --all}
+  # Safari web app: Manifest:start_url and ApplicationIcon.icns; Chrome web app: CrAppModeShortcutURL and its
+  # CFBundleIconFile (app.icns)
+  URL=$(plist "$SRC" Manifest:start_url || plist "$SRC" CrAppModeShortcutURL || true)
+  [[ -n $URL ]] || { echo "No web app address in $SRC – is it a Safari or Chrome web app?" >&2; exit 1; }
+  ICON="$SRC/Contents/Resources/ApplicationIcon.icns"
+  if [[ ! -f $ICON ]]; then
+    ICON="$SRC/Contents/Resources/$(plist "$SRC" CFBundleIconFile || true)"
+    [[ $ICON == *.icns ]] || ICON+=.icns
+    [[ -f $ICON ]] || ICON=""
+  fi
   NAME=${2:-"$(plist "$SRC" CFBundleName) Tabs"}
-  build_app "$NAME" "$(plist "$SRC" Manifest:start_url)" "$SRC/Contents/Resources/ApplicationIcon.icns"
+  build_app "$NAME" "$URL" "$ICON"
 fi

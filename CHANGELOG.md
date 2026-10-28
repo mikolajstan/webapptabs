@@ -3,6 +3,21 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
+## Unreleased
+
+### Added
+- `make-app.sh` builds a Tabs app from a **Chrome web app** too (Chrome's Install Page as App / Create Shortcut,
+  in `~/Applications/Chrome Apps.localized`): it takes the Chrome app's address and icon, as it does for Safari
+  web apps. Anything else is refused with a message instead of building an app without an address. The README
+  explains how to make a web app in either browser.
+
+### Fixed
+- **Tables stuck loading after launch** (e.g. Tickets and Timesheets on a site whose security token had expired
+  overnight): all tabs loaded at once and each got its own new token from the site, so all but one had their
+  background requests refused until reloaded. Now the first tab loads on its own and the others right after it
+  (at most 8 s later), sharing its session and token.
+- The diagnostics log uses local time (it was UTC).
+
 ## [1.7.1] – 2026-10-25
 
 ### Changed

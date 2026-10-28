@@ -1,7 +1,8 @@
 # WebAppTabs
 
 Small single-site browsers for macOS (26 / Tahoe), one app per web app, where every page is a **native
-macOS tab**. They replace Safari's "Add to Dock" web apps, which can't do tabs.
+macOS tab**. They replace Safari's "Add to Dock" web apps and Chrome's installed web apps, which can't do
+tabs like this.
 
 Installed apps (in `~/Applications`, pinned to the Dock):
 
@@ -14,9 +15,10 @@ Installed apps (in `~/Applications`, pinned to the Dock):
 ## Building
 
 ```bash
-# a new Tabs app from an existing Safari web app (copies its address and icon; only needed once)
+# a new Tabs app from an existing Safari or Chrome web app (copies its address and icon; only needed once)
 ./make-app.sh ~/Applications/GitHub.app            # → ~/Applications/GitHub Tabs.app
 ./make-app.sh ~/Applications/Gmail.app "My Mail"   # custom name
+./make-app.sh ~/Applications/Chrome\ Apps.localized/YouTube.app "YouTube Tabs"   # from a Chrome web app
 
 # after changing main.swift: rebuild every Tabs app (running ones are restarted, tabs come back)
 ./make-app.sh --all
@@ -27,7 +29,9 @@ router/build.sh
 
 No Xcode project: `swiftc` compiles `main.swift` into one binary; `make-app.sh` wraps it in an `.app`
 bundle whose `Info.plist` carries the site (`WebAppURL`), then ad-hoc signs and registers it.
-To make a Safari web app first: open the site in Safari → **File → Add to Dock…**.
+To make the web app to start from: in Safari open the site → **File → Add to Dock…**; or in Chrome →
+**⋮ → Cast, Save and Share → Install Page as App…** (Chrome puts it in `~/Applications/Chrome Apps.localized`).
+The Tabs app runs on Safari's engine (WebKit) either way, with its own sign-ins.
 
 ## Features
 
@@ -93,8 +97,11 @@ state (loaded / unloaded / not loaded yet) and memory, with Unload / Reload butt
   Always reload, and that tab goes back to its own pinned page. The login page is recognised by its address
   (login, sign-in, authentication, sso…, or a sign-in host like accounts.google.com), or set it in Settings →
   **Login page**.
+- At launch the first tab loads on its own and the others right after it (at most 8 s later), so they share
+  the session and security token the site hands out. Loading all at once, each tab could get its own token,
+  and all but one then failed their background requests (e.g. a table that never loaded).
 - A diagnostics log of launches, quits, sleep / wake, reloads, unloads and login pages is kept in
-  `~/Library/Logs/WebAppTabs/<app>.log` (addresses without their query).
+  `~/Library/Logs/WebAppTabs/<app>.log` (local time; addresses without their query).
 
 **Other**
 - Toolbar: ‹ › back/forward, centred page title, Share button.

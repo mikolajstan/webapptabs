@@ -9,7 +9,7 @@ the code: how it fits together, decisions already made, and traps already hit.
 | File | What |
 |---|---|
 | `main.swift` (~2650 lines) | the whole Tabs app (AppKit + WKWebView, no Xcode project) |
-| `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app, or `--all` rebuilds every Tabs app |
+| `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app (`Manifest:start_url`, `ApplicationIcon.icns`) or a Chrome one (`~/Applications/Chrome Apps.localized/*.app`: `CrAppModeShortcutURL`, its `CFBundleIconFile` = `app.icns`), or `--all` rebuilds every Tabs app |
 | `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to Safari |
 | `tools/test.sh`, `tools/harness.py` | scripted tests in a throwaway app (see Testing) |
 | `tools/crop.swift` | crop + enlarge a screenshot region (tab bar inspection) |
@@ -199,7 +199,15 @@ saved session). Router: `router/build.sh` then `pkill -x LinkRouter` (it stays r
    (`awaySince`, `didWake`). Login pages: `isLoginPage` (Settings → Login page prefix, else a heuristic);
    `Tab` notes one on server redirect / commit and, when a later `didFinish` is on the site but not the login
    page, calls `App.didSignIn` → reloads the loaded always-loaded tabs (pinned + quick on Always), the tab
-   goes back to its pinned URL; at most every 30 s. `Diagnostics.log` writes
+   goes back to its pinned URL; at most every 30 s. **Launch order**: the work site's CSRF token cookie lives
+   1 h, and a request without it gets a new random token (in the page and the cookie). With all tabs loading at
+   once at launch, each got a different token, the cookie kept the last, and the other tabs' AJAX (their
+   tables, e.g. Tickets and Timesheets) were refused – signed in, table stuck loading, reload fixed it (user
+   report, 1.7.1). Now `openStartTabs` holds every tab but the first (`holdingLoads`, `Tab.holdLoad`/`loadHeld`,
+   `pageURL` includes the held URL) until the first finishes (`tabFinishedLoading`, also on failure) or 8 s.
+   Reproduced with a local test site that refuses mismatched tokens (all but one REFUSED before, all loaded
+   after). Checking only that pages are signed in missed this – check the page's background loads too.
+   `Diagnostics.log` writes
    `~/Library/Logs/WebAppTabs/<app>.log` – read it when the user reports session / loading problems.
 7. Notifications: JS shim replaces `window.Notification` → `webkit.messageHandlers.notify` → UNUserNotification.
    Every tab of the site posts its own copy (each pinned / quick tab runs the whole site), so the handler drops a
