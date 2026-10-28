@@ -9,7 +9,7 @@ the code: how it fits together, decisions already made, and traps already hit.
 | File | What |
 |---|---|
 | `main.swift` (~2650 lines) | the whole Tabs app (AppKit + WKWebView, no Xcode project) |
-| `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app, or `--all` rebuilds every Tabs app |
+| `make-app.sh` | builds `~/Applications/<Name>.app` from a Safari web app (`Manifest:start_url`, `ApplicationIcon.icns`) or a Chrome one (`~/Applications/Chrome Apps.localized/*.app`: `CrAppModeShortcutURL`, its `CFBundleIconFile` = `app.icns`), or `--all` rebuilds every Tabs app |
 | `router/main.swift`, `router/build.sh` | **Link Router**, the default browser: routes links to Tabs apps, rest to Safari |
 | `tools/test.sh`, `tools/harness.py` | scripted tests in a throwaway app (see Testing) |
 | `tools/crop.swift` | crop + enlarge a screenshot region (tab bar inspection) |

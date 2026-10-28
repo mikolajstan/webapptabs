@@ -14,9 +14,10 @@ Installed apps (in `~/Applications`, pinned to the Dock):
 ## Building
 
 ```bash
-# a new Tabs app from an existing Safari web app (copies its address and icon; only needed once)
+# a new Tabs app from an existing Safari or Chrome web app (copies its address and icon; only needed once)
 ./make-app.sh ~/Applications/GitHub.app            # → ~/Applications/GitHub Tabs.app
 ./make-app.sh ~/Applications/Gmail.app "My Mail"   # custom name
+./make-app.sh ~/Applications/Chrome\ Apps.localized/YouTube.app "YouTube Tabs"   # from a Chrome web app
 
 # after changing main.swift: rebuild every Tabs app (running ones are restarted, tabs come back)
 ./make-app.sh --all
