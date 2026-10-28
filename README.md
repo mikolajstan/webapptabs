@@ -1,7 +1,8 @@
 # WebAppTabs
 
 Small single-site browsers for macOS (26 / Tahoe), one app per web app, where every page is a **native
-macOS tab**. They replace Safari's "Add to Dock" web apps, which can't do tabs.
+macOS tab**. They replace Safari's "Add to Dock" web apps and Chrome's installed web apps, which can't do
+tabs like this.
 
 Installed apps (in `~/Applications`, pinned to the Dock):
 
@@ -28,7 +29,9 @@ router/build.sh
 
 No Xcode project: `swiftc` compiles `main.swift` into one binary; `make-app.sh` wraps it in an `.app`
 bundle whose `Info.plist` carries the site (`WebAppURL`), then ad-hoc signs and registers it.
-To make a Safari web app first: open the site in Safari → **File → Add to Dock…**.
+To make the web app to start from: in Safari open the site → **File → Add to Dock…**; or in Chrome →
+**⋮ → Cast, Save and Share → Install Page as App…** (Chrome puts it in `~/Applications/Chrome Apps.localized`).
+The Tabs app runs on Safari's engine (WebKit) either way, with its own sign-ins.
 
 ## Features
 

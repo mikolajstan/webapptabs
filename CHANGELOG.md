@@ -8,7 +8,8 @@ All notable changes to WebAppTabs. Versions match the git tags and the
 ### Added
 - `make-app.sh` builds a Tabs app from a **Chrome web app** too (Chrome's Install Page as App / Create Shortcut,
   in `~/Applications/Chrome Apps.localized`): it takes the Chrome app's address and icon, as it does for Safari
-  web apps. Anything else is refused with a message instead of building an app without an address.
+  web apps. Anything else is refused with a message instead of building an app without an address. The README
+  explains how to make a web app in either browser.
 
 ### Fixed
 - **Tables stuck loading after launch** (e.g. Tickets and Timesheets on a site whose security token had expired
