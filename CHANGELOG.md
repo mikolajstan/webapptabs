@@ -3,7 +3,7 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## Unreleased
+## [1.9] – 2026-10-28
 
 ### Added
 - **Link Router: choose the browser for other links** (Safari until now, fixed). Open Link Router yourself
@@ -213,6 +213,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.9]: https://github.com/mikolajstan/webapptabs/releases/tag/1.9
 [1.8]: https://github.com/mikolajstan/webapptabs/releases/tag/1.8
 [1.7.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7.1
 [1.7]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7
