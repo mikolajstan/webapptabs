@@ -3,7 +3,7 @@
 All notable changes to WebAppTabs. Versions match the git tags and the
 [GitHub releases](https://github.com/mikolajstan/webapptabs/releases).
 
-## Unreleased
+## [1.8] – 2026-10-28
 
 ### Added
 - `make-app.sh` builds a Tabs app from a **Chrome web app** too (Chrome's Install Page as App / Create Shortcut,
@@ -204,6 +204,7 @@ every page as a native macOS tab.
   - Downloads go to ~/Downloads.
   - Pop-up dialogs, file upload and copy/paste work.
 
+[1.8]: https://github.com/mikolajstan/webapptabs/releases/tag/1.8
 [1.7.1]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7.1
 [1.7]: https://github.com/mikolajstan/webapptabs/releases/tag/1.7
 [1.6]: https://github.com/mikolajstan/webapptabs/releases/tag/1.6
